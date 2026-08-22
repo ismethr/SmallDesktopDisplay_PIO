@@ -12,6 +12,21 @@ void test_brightness_validation_and_pwm_mapping() {
   TEST_ASSERT_INT_WITHIN(1, 511, sdd::brightnessToPwm(50));
 }
 
+void test_scheduled_brightness_requires_valid_time() {
+  TEST_ASSERT_EQUAL_INT(50, sdd::scheduledBrightness(50, 0, false, 10, 0, 7));
+  TEST_ASSERT_EQUAL_INT(10, sdd::scheduledBrightness(50, 0, true, 10, 0, 7));
+  TEST_ASSERT_EQUAL_INT(10, sdd::scheduledBrightness(50, 6, true, 10, 0, 7));
+  TEST_ASSERT_EQUAL_INT(50, sdd::scheduledBrightness(50, 7, true, 10, 0, 7));
+  TEST_ASSERT_EQUAL_INT(5, sdd::scheduledBrightness(5, 2, true, 10, 0, 7));
+}
+
+void test_scheduled_brightness_supports_midnight_crossing_and_disable() {
+  TEST_ASSERT_EQUAL_INT(10, sdd::scheduledBrightness(50, 23, true, 10, 23, 7));
+  TEST_ASSERT_EQUAL_INT(10, sdd::scheduledBrightness(50, 2, true, 10, 23, 7));
+  TEST_ASSERT_EQUAL_INT(50, sdd::scheduledBrightness(50, 12, true, 10, 23, 7));
+  TEST_ASSERT_EQUAL_INT(50, sdd::scheduledBrightness(50, 0, true, 10, 0, 0));
+}
+
 void test_persisted_setting_ranges() {
   TEST_ASSERT_TRUE(sdd::isValidRotation(0));
   TEST_ASSERT_TRUE(sdd::isValidRotation(3));
@@ -135,6 +150,8 @@ void test_long_banner_scroll_offsets_are_bounded() {
 int run_display_logic_tests() {
   UNITY_BEGIN();
   RUN_TEST(test_brightness_validation_and_pwm_mapping);
+  RUN_TEST(test_scheduled_brightness_requires_valid_time);
+  RUN_TEST(test_scheduled_brightness_supports_midnight_crossing_and_disable);
   RUN_TEST(test_persisted_setting_ranges);
   RUN_TEST(test_weather_value_ranges);
   RUN_TEST(test_decimal_temperature_parsing);

@@ -130,6 +130,20 @@ constexpr uint16_t brightnessToPwm(int brightness) {
                     : static_cast<uint16_t>((100 - brightness) * 1023L / 100L));
 }
 
+constexpr bool isNightHour(int hour, int startHour, int endHour) {
+  return startHour == endHour
+             ? false
+             : (startHour < endHour ? (hour >= startHour && hour < endHour)
+                                    : (hour >= startHour || hour < endHour));
+}
+
+constexpr int scheduledBrightness(int dayBrightness, int hour, bool timeIsValid,
+                                  int nightBrightness, int startHour, int endHour) {
+  return timeIsValid && isNightHour(hour, startHour, endHour)
+             ? (dayBrightness < nightBrightness ? dayBrightness : nightBrightness)
+             : dayBrightness;
+}
+
 constexpr uint8_t temperatureBarWidth(int temperatureCelsius) {
   return temperatureCelsius <= -10
              ? 0

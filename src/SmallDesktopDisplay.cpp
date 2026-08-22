@@ -50,7 +50,7 @@
 #include "font/font_td_20.h"         //字体库
 #include "core/DisplayLogic.h"       //纯逻辑与边界校验
 
-#define Version "SDD V1.7.0"
+#define Version "SDD V1.7.1"
 /* *****************************************************************
  *  配置使能位
  * *****************************************************************/
@@ -103,6 +103,7 @@ void reflashTime();
 void updateWeatherInterval();
 bool parseStrictInt(const String &text, int &value);
 void applyBacklight(int brightness);
+void refreshBacklightSchedule();
 void printDeviceStatus();
 void digitalClockDisplay(int reflash_en);
 void reflashBanner();
@@ -162,7 +163,8 @@ uint16_t bgColor = 0x0000;
 
 // 其余状态标志位
 int LCD_Rotation = 0;        // LCD屏幕方向
-int LCD_BL_PWM = 50;         // 屏幕亮度0-100，默认50
+int LCD_BL_PWM = 50;         // 日间屏幕亮度0-100，默认50
+int appliedLCD_BL_PWM = -1;  // 当前实际亮度；夜间可能低于日间设置
 uint8_t Wifi_en = 1;         // WIFI模块启动  1：打开    0：关闭
 int DHT_img_flag = 0;        // DHT传感器使用标志位
 
@@ -736,7 +738,18 @@ String replaceUnsupportedGlyphs(TFT_eSPI &display, const String &text)
 void applyBacklight(int brightness)
 {
   LCD_BL_PWM = constrain(brightness, 0, 100);
-  analogWrite(LCD_BL_PIN, sdd::brightnessToPwm(LCD_BL_PWM));
+  refreshBacklightSchedule();
+}
+
+void refreshBacklightSchedule()
+{
+  const int desiredBrightness = sdd::scheduledBrightness(
+      LCD_BL_PWM, hour(), timeStatus() != timeNotSet,
+      NIGHT_DIM_BRIGHTNESS, NIGHT_DIM_START_HOUR, NIGHT_DIM_END_HOUR);
+  if (desiredBrightness == appliedLCD_BL_PWM)
+    return;
+  analogWrite(LCD_BL_PIN, sdd::brightnessToPwm(desiredBrightness));
+  appliedLCD_BL_PWM = desiredBrightness;
 }
 
 void printDeviceStatus()
@@ -760,10 +773,19 @@ void printDeviceStatus()
   mySerialPrint("Weather interval: ");
   mySerialPrint(weatherUpdateIntervalMinutes);
   mySerialPrintln(" min");
-  mySerialPrint("Brightness / rotation: ");
+  mySerialPrint("Brightness day / current / rotation: ");
   mySerialPrint(LCD_BL_PWM);
   mySerialPrint(" / ");
+  mySerialPrint(appliedLCD_BL_PWM);
+  mySerialPrint(" / ");
   mySerialPrintln(LCD_Rotation);
+  mySerialPrint("Night dim: ");
+  mySerialPrint(NIGHT_DIM_START_HOUR);
+  mySerialPrint(":00-");
+  mySerialPrint(NIGHT_DIM_END_HOUR);
+  mySerialPrint(":00 @ ");
+  mySerialPrint(NIGHT_DIM_BRIGHTNESS);
+  mySerialPrintln("%");
   mySerialPrint("Codex bridge: ");
   mySerialPrintln(strlen(codexBridgeHost) ? codexBridgeHost : "<disabled>");
   mySerialPrint("Codex remaining: ");
@@ -1159,7 +1181,8 @@ void Webconfig()
   snprintf(cityValue, sizeof(cityValue), "%ld",
            sdd::isValidCityCode(storedCityCode) ? storedCityCode : 0L);
   strlcpy(codexHostValue, codexBridgeHost, sizeof(codexHostValue));
-  WiFiManagerParameter custom_bl("LCDBL", "屏幕亮度（0-100）", brightnessValue, 3);
+  String brightnessLabel = "日间亮度（0-100；夜间自动" + String(NIGHT_DIM_BRIGHTNESS) + "）";
+  WiFiManagerParameter custom_bl("LCDBL", brightnessLabel.c_str(), brightnessValue, 3);
 #if DHT_EN
   char dhtEnabledValue[2];
   snprintf(dhtEnabledValue, sizeof(dhtEnabledValue), "%d", DHT_img_flag == 1 ? 1 : 0);
@@ -1518,6 +1541,11 @@ void sendAdminPage(const String &notice = "", bool error = false)
   page += Version;
   page += F("</span><span>Wi-Fi</span><span>");
   page += adminHtmlEscape(WiFi.SSID());
+  page += F("</span><span>日间 / 当前亮度</span><span>");
+  page += String(LCD_BL_PWM);
+  page += F("% / ");
+  page += String(appliedLCD_BL_PWM);
+  page += F("%");
   page += F("</span><span>Codex 剩余</span><span>");
   page += codexUsage.valid ? String(codexUsage.remainingPercent) + "%" : "--";
   page += F("</span><span>访问地址</span><span>http://");
@@ -1532,10 +1560,17 @@ void sendAdminPage(const String &notice = "", bool error = false)
             "<label for='city'>城市代码</label><input id='city' name='city' inputmode='numeric' maxlength='9' value='");
   page += String(storedCitySetting());
   page += F("'><small>填写 9 位 weather.com.cn 城市代码；0 表示自动识别。</small>"
-            "<label for='brightness'>屏幕亮度（0–100）</label><input id='brightness' name='brightness' "
+            "<label for='brightness'>日间亮度（0–100）</label><input id='brightness' name='brightness' "
             "type='number' min='0' max='100' value='");
   page += String(LCD_BL_PWM);
-  page += F("'><label for='interval'>网络刷新间隔（分钟）</label><input id='interval' name='interval' "
+  page += F("'><small>每天 ");
+  page += String(NIGHT_DIM_START_HOUR);
+  page += F(":00–");
+  page += String(NIGHT_DIM_END_HOUR);
+  page += F(":00 自动降至 ");
+  page += String(NIGHT_DIM_BRIGHTNESS);
+  page += F("%；更低的日间设置不会在夜间被调亮。</small>"
+            "<label for='interval'>网络刷新间隔（分钟）</label><input id='interval' name='interval' "
             "type='number' min='1' max='60' value='");
   page += String(weatherUpdateIntervalMinutes);
   page += F("'><label for='rotation'>屏幕方向</label><select id='rotation' name='rotation'>");
@@ -2658,6 +2693,7 @@ time_t getNtpTime()
         {
           const time_t epoch = secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
           setTime(epoch);
+          refreshBacklightSchedule();
           mySerialPrintln("NTP synchronization succeeded");
           return finish(epoch);
         }
@@ -3010,4 +3046,5 @@ void loop()
   WIFI_reflash_All();      // WIFI应用
   Serial_set();            // 串口响应
   Button_sw1.loop();       // 按钮轮询
+  refreshBacklightSchedule(); // NTP 有效后按日夜规则自动调光
 }

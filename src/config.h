@@ -42,4 +42,24 @@
 #define DEFAULT_CODEX_BRIDGE_HOST ""
 #define DEFAULT_WEATHER_INTERVAL_MINUTES 10
 
+// Backlight schedule. The saved/user-selected value remains the daytime
+// brightness. A valid NTP time is required before night dimming is applied.
+#ifndef NIGHT_DIM_START_HOUR
+#define NIGHT_DIM_START_HOUR 0
+#endif
+#ifndef NIGHT_DIM_END_HOUR
+#define NIGHT_DIM_END_HOUR 7
+#endif
+#ifndef NIGHT_DIM_BRIGHTNESS
+#define NIGHT_DIM_BRIGHTNESS 10
+#endif
+
+#if NIGHT_DIM_START_HOUR < 0 || NIGHT_DIM_START_HOUR > 23 || \
+    NIGHT_DIM_END_HOUR < 0 || NIGHT_DIM_END_HOUR > 23
+#error "Night dim hours must be between 0 and 23"
+#endif
+#if NIGHT_DIM_BRIGHTNESS < 0 || NIGHT_DIM_BRIGHTNESS > 100
+#error "Night dim brightness must be between 0 and 100"
+#endif
+
 #endif
