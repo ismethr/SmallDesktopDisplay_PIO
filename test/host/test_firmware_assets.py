@@ -9,10 +9,24 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class FirmwareAssetTests(unittest.TestCase):
+    def test_chatgpt_icon_is_fixed_24_by_24_bitmap(self):
+        source = (REPOSITORY_ROOT / "src" / "img" / "chatgpt_24.h").read_text(
+            encoding="utf-8"
+        )
+        data = bytes(
+            int(value, 16)
+            for value in re.findall(r"0x([0-9A-Fa-f]{2})", source)
+        )
+        self.assertEqual(24 * 3, len(data))
+        self.assertEqual(
+            "66e190c64e1cc5d72ac89c507c2eab783130a4d18527a5fec7f2ce3b843912be",
+            hashlib.sha256(data).hexdigest(),
+        )
+
     def test_all_jpeg_assets_have_expected_frames_and_dimensions(self):
         source_root = REPOSITORY_ROOT / "src"
         paths = sorted((source_root / "weatherNum" / "img" / "tianqi").glob("*.h"))
-        paths += [source_root / "img" / "temperature.h", source_root / "img" / "humidity.h"]
+        paths += [source_root / "img" / "temperature.h"]
         paths += sorted((source_root / "Animate" / "img").glob("*.h"))
 
         dimensions = {}
@@ -41,8 +55,8 @@ class FirmwareAssetTests(unittest.TestCase):
                 dimensions[size] = dimensions.get(size, 0) + 1
                 frame_count += 1
 
-        self.assertEqual(71, frame_count)
-        self.assertEqual({(60, 60): 23, (24, 24): 2, (70, 70): 46}, dimensions)
+        self.assertEqual(70, frame_count)
+        self.assertEqual({(60, 60): 23, (24, 24): 1, (70, 70): 46}, dimensions)
 
     def test_array_only_decoder_core_is_pinned_and_has_no_file_api(self):
         decoder = REPOSITORY_ROOT / "lib" / "TJpg_Decoder_ArrayOnly"

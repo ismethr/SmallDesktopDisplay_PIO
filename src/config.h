@@ -30,10 +30,9 @@
 #define WIFI_CONNECT_TIMEOUT_MS 15000UL
 #define CONFIG_PORTAL_TIMEOUT_SECONDS 180
 #define WEATHER_HTTP_TIMEOUT_MS 10000
+#define CODEX_BRIDGE_HTTP_TIMEOUT_MS 4000
+#define CODEX_BRIDGE_DEFAULT_PORT 8766
+#define DEFAULT_CODEX_BRIDGE_HOST ""
 #define DEFAULT_WEATHER_INTERVAL_MINUTES 10
-
-// Optional TianAPI leaf-certificate SHA-1 pin. When empty, firmware validates
-// the server against the bundled DigiCert Global Root G2 trust anchor.
-#define TIANAPI_TLS_FINGERPRINT ""
 
 #endif

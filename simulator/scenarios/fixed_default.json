@@ -6,13 +6,15 @@
   "city": "Shanghai",
   "temperature_text": "26",
   "temperature_celsius": 26,
-  "humidity_text": "65%",
-  "relative_humidity": 65,
+  "codex_valid": 1,
+  "codex_stale": 0,
+  "codex_remaining_percent": 58,
+  "codex_reset_minutes": 4320,
   "aqi": 42,
   "weather_code": 1,
   "brightness": 50,
   "rotation": 0,
   "animation": "miku",
   "animation_frame": 0,
-  "expected_fnv1a64": "bf2aaa53c17d072c"
+  "expected_fnv1a64": "d9ca84bd6a977dae"
 }

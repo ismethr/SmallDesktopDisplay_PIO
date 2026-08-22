@@ -1,5 +1,12 @@
 # Animation assets
 
+The bundled frame arrays were inherited from the upstream repository. Their
+original source and separate artwork licences are not documented in the
+available history. Character names and artwork may also be subject to
+third-party copyright or trademark rights; see the repository-level
+`THIRD_PARTY_NOTICES.md`. Replace them with artwork you are authorised to use
+before distributing a branded or commercial product.
+
 `Animate.cpp` selects one generated frame table through `Animate_Choice` in
 `src/config.h`. Choices `1`, `2`, and `3` select astronaut, hutao, and miku;
 `0` disables animation. Any other value is rejected at compile time.

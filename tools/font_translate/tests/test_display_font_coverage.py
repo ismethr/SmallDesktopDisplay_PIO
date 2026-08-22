@@ -50,27 +50,11 @@ class DisplayFontCoverageTests(unittest.TestCase):
         )
 
     def test_fixed_calendar_pages_and_statuses_are_supported(self):
-        self.assert_calendar_text_supported(
-            "NTP WAIT" "公历年月日周农历未开存" "L0123456789-"
-        )
-        for status in ("NTP WAIT", "农历未开", "农历未存"):
+        self.assert_calendar_text_supported("NTP WAIT" "0123456789月日周一二三四五六")
+        for status in ("NTP WAIT", "12月31日 周六"):
             self.assertLessEqual(self.calendar_width(status), 150)
 
-    def test_all_dynamic_lunar_characters_are_supported(self):
-        heavenly_stems = "甲乙丙丁戊己庚辛壬癸"
-        earthly_branches = "子丑寅卯辰巳午未申酉戌亥"
-        zodiac = "鼠牛虎兔龙蛇马羊猴鸡狗猪"
-        lunar_days = "初一二三四五六七八九十廿"
-        solar_terms = (
-            "立春雨水惊蛰春分清明谷雨立夏小满芒种夏至小暑大暑"
-            "立秋处暑白露秋分寒露霜降立冬小雪大雪冬至"
-        )
-        self.assert_calendar_text_supported(
-            heavenly_stems + earthly_branches + zodiac + lunar_days + solar_terms
-        )
-
-    def test_replacement_glyph_exists_in_both_smooth_fonts(self):
-        self.assertIn("-", self.calendar_glyphs)
+    def test_replacement_glyph_exists_in_weather_font(self):
         self.assertIn("-", self.weather_glyphs)
 
     def test_weather_wait_fallback_is_supported(self):
@@ -78,6 +62,20 @@ class DisplayFontCoverageTests(unittest.TestCase):
             {char for char in "WEATHER WAIT" if char != " " and char not in self.weather_glyphs}
         )
         self.assertEqual([], missing, f"missing weather fallback glyphs: {missing!r}")
+
+    def test_codex_remaining_banner_is_supported(self):
+        missing = sorted(
+            {
+                char
+                for char in "Codex 剩余100%，距离重置还有99天23小时59分钟 --"
+                if char != " " and char not in self.weather_glyphs
+            }
+        )
+        self.assertEqual([], missing, f"missing Codex remaining glyphs: {missing!r}")
+
+    def test_current_weather_city_is_supported(self):
+        missing = sorted({char for char in "呈贡" if char not in self.weather_glyphs})
+        self.assertEqual([], missing, f"missing current city glyphs: {missing!r}")
 
     def test_calendar_font_exactly_matches_its_manifest(self):
         manifest = (
@@ -92,9 +90,9 @@ class DisplayFontCoverageTests(unittest.TestCase):
         data = bytes(
             int(value, 16) for value in re.findall(r"0x([0-9A-Fa-f]{2})", source)
         )
-        self.assertEqual(32900, len(data))
+        self.assertEqual(5046, len(data))
         self.assertEqual(
-            "bba51ad7402e3b1fc8b0d6bdc15d64695ae888e38ab063c2fd4235b77b168b17",
+            "fbf481a10b6c4cc67ccc656d462540a1f2f859b79d61ae0df30fc0caf6c61c63",
             hashlib.sha256(data).hexdigest(),
         )
 

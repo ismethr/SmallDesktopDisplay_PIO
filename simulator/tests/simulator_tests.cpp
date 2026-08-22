@@ -187,6 +187,17 @@ void testDisplayLogicBoundaries() {
   CHECK(sdd::humidityBarWidth(99) == 49U);
   CHECK(sdd::humidityBarWidth(100) == 50U);
   CHECK(sdd::humidityBarWidth(101) == 50U);
+  CHECK(sdd::codexRemainingBarWidth(-1) == 0U);
+  CHECK(sdd::codexRemainingBarWidth(0) == 0U);
+  CHECK(sdd::codexRemainingBarWidth(50) == 25U);
+  CHECK(sdd::codexRemainingBarWidth(100) == 50U);
+  CHECK(sdd::codexRemainingBarWidth(101) == 50U);
+  CHECK(sdd::codexResetDisplay(45).value == 45U);
+  CHECK(sdd::codexResetDisplay(45).unit == sdd::CodexResetUnit::Minutes);
+  CHECK(sdd::codexResetDisplay(61).value == 2U);
+  CHECK(sdd::codexResetDisplay(61).unit == sdd::CodexResetUnit::Hours);
+  CHECK(sdd::codexResetDisplay(24U * 60U + 1U).value == 2U);
+  CHECK(sdd::codexResetDisplay(24U * 60U + 1U).unit == sdd::CodexResetUnit::Days);
   CHECK(sdd::isValidTemperature(-80));
   CHECK(!sdd::isValidTemperature(-81));
   CHECK(sdd::isValidTemperature(80));
@@ -242,7 +253,6 @@ void testWeatherMappingAndAssets() {
   CHECK(blowingSand.data != sandstorm.data);
   CHECK(floatingDust.data != sandstorm.data);
   checkJpeg(sdd_sim::temperatureIconAsset());
-  checkJpeg(sdd_sim::humidityIconAsset());
   CHECK(sdd_sim::weatherFont().valid());
   CHECK(sdd_sim::calendarFont().valid());
 }
@@ -359,15 +369,18 @@ sdd_sim::SimulatorState stateFromScenario(const std::string& json) {
   state.weather.city = fieldText(json, "city");
   state.weather.temperatureText = fieldText(json, "temperature_text");
   state.weather.temperatureCelsius = static_cast<float>(fieldInt(json, "temperature_celsius"));
-  state.weather.humidityText = fieldText(json, "humidity_text");
-  state.weather.relativeHumidity = fieldInt(json, "relative_humidity");
+  state.codex.valid = fieldInt(json, "codex_valid") != 0;
+  state.codex.stale = fieldInt(json, "codex_stale") != 0;
+  state.codex.remainingPercent = fieldInt(json, "codex_remaining_percent");
+  state.codex.resetMinutes = fieldInt(json, "codex_reset_minutes");
   state.weather.aqi = fieldInt(json, "aqi");
   state.weather.weatherCode = fieldInt(json, "weather_code");
   state.setBrightness(fieldInt(json, "brightness"));
   state.setRotation(fieldInt(json, "rotation"));
   state.setAnimation(animationFromText(fieldText(json, "animation")));
   state.animationFrame = static_cast<std::size_t>(fieldInt(json, "animation_frame"));
-  state.weather.banners = {{"WEATHER WAIT", "AQI 42", "WIND", "TODAY", "LOW", "HIGH"}};
+  state.weather.banners = {{"WEATHER WAIT", "AQI 42", "WIND", "TODAY", "LOW", "HIGH",
+                            "Codex 剩余58%，距离重置还有3天"}};
   state.calendar.banners = {{"2026", "8-5", "LUNAR", "6-23", "DATE"}};
   return state;
 }

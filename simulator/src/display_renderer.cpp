@@ -8,6 +8,7 @@
 #include <string>
 
 #include "core/DisplayLogic.h"
+#include "img/chatgpt_24.h"
 #include "sdd_sim/firmware_assets.h"
 
 namespace sdd_sim {
@@ -37,12 +38,26 @@ std::uint16_t temperatureColor(int width) noexcept {
   return 0xF00F;
 }
 
-std::uint16_t humidityColor(int humidity) noexcept {
-  if (humidity > 90) return 0x00FF;
-  if (humidity > 70) return 0x0AFF;
-  if (humidity > 40) return 0x0F0F;
-  if (humidity > 20) return 0xFF0F;
-  return 0xF00F;
+std::uint16_t codexUsageColor(const CodexUsageViewModel& usage) noexcept {
+  if (!usage.valid || usage.stale) return Framebuffer::rgb565(128, 128, 128);
+  if (usage.remainingPercent >= 40) return Framebuffer::rgb565(0, 255, 0);
+  if (usage.remainingPercent >= 15) return Framebuffer::rgb565(255, 255, 0);
+  return Framebuffer::rgb565(255, 0, 0);
+}
+
+void drawChatGptIcon(Framebuffer& framebuffer, const CodexUsageViewModel& usage,
+                     int x, int y) {
+  const std::uint16_t iconColor =
+      !usage.valid || usage.stale ? Framebuffer::rgb565(128, 128, 128)
+                                  : color::White;
+  for (int iconY = 0; iconY < 24; ++iconY) {
+    for (int iconX = 0; iconX < 24; ++iconX) {
+      const std::uint8_t bits = chatgptIcon24[iconY * 3 + iconX / 8];
+      if ((bits & (0x80U >> (iconX % 8))) != 0U) {
+        framebuffer.setPixel(x + iconX, y + iconY, iconColor);
+      }
+    }
+  }
 }
 
 struct AqiPresentation {
@@ -161,7 +176,6 @@ void DisplayRenderer::render(const SimulatorState& state,
              state.calendarCarousel, 150);
 
   drawJpeg(framebuffer, 15, 183, temperatureIconAsset());
-  drawJpeg(framebuffer, 15, 213, humidityIconAsset());
 
   const Rect temperatureTextRegion{100, 184, 58, 24};
   weatherTextFont.drawText(
@@ -177,16 +191,25 @@ void DisplayRenderer::render(const SimulatorState& state,
   framebuffer.fillRoundRect(46, 193, temperatureWidth, 4, 2,
                             temperatureColor(temperatureWidth));
 
-  const Rect humidityTextRegion{100, 214, 58, 24};
-  weatherTextFont.drawText(
-      framebuffer,
-      replaceUnsupportedGlyphs(weatherTextFont, state.weather.humidityText),
-      128, 227, color::White, color::Black, TextAlign::Center,
-      &humidityTextRegion);
-  const int humidity = std::max(0, std::min(100, state.weather.relativeHumidity));
+  drawChatGptIcon(framebuffer, state.codex, 15, 213);
   framebuffer.drawRoundRect(45, 222, 52, 6, 3, color::White);
-  framebuffer.fillRoundRect(46, 223, humidity / 2, 4, 2,
-                            humidityColor(humidity));
+  if (state.codex.valid) {
+    const int barWidth = static_cast<int>(
+        sdd::codexRemainingBarWidth(state.codex.remainingPercent));
+    if (barWidth > 0) {
+      framebuffer.fillRoundRect(46, 223, barWidth, 4, 2,
+                                codexUsageColor(state.codex));
+    }
+  }
+  const Rect codexPercentRegion{100, 212, 60, 28};
+  std::string codexPercent = state.codex.valid
+                                 ? std::to_string(std::max(0, std::min(100, state.codex.remainingPercent))) +
+                                       "%"
+                                 : "--";
+  weatherTextFont.drawText(framebuffer, codexPercent, 128, 227,
+                           state.codex.valid ? color::White
+                                             : Framebuffer::rgb565(128, 128, 128),
+                           color::Black, TextAlign::Center, &codexPercentRegion);
 
   if (state.indoor.enabled) {
     framebuffer.fillRect(160, 150, 80, 90, color::Black);

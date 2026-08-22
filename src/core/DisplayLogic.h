@@ -146,6 +146,36 @@ constexpr uint8_t humidityBarWidth(int relativeHumidity) {
                     : static_cast<uint8_t>(relativeHumidity / 2));
 }
 
+constexpr uint8_t codexRemainingBarWidth(int remainingPercent) {
+  return remainingPercent <= 0
+             ? 0
+             : (remainingPercent >= 100
+                    ? 50
+                    : static_cast<uint8_t>(remainingPercent * 50L / 100L));
+}
+
+enum class CodexResetUnit : uint8_t {
+  Minutes,
+  Hours,
+  Days,
+};
+
+struct CodexResetDisplay {
+  uint32_t value;
+  CodexResetUnit unit;
+};
+
+constexpr CodexResetDisplay codexResetDisplay(uint32_t resetMinutes) {
+  return resetMinutes >= 24UL * 60UL
+             ? CodexResetDisplay{static_cast<uint32_t>(
+                                     (resetMinutes + 24UL * 60UL - 1UL) / (24UL * 60UL)),
+                                 CodexResetUnit::Days}
+         : resetMinutes >= 60UL
+             ? CodexResetDisplay{static_cast<uint32_t>((resetMinutes + 59UL) / 60UL),
+                                 CodexResetUnit::Hours}
+             : CodexResetDisplay{resetMinutes, CodexResetUnit::Minutes};
+}
+
 // weather.com.cn returns the Chinese AQI index, not a raw PM2.5 concentration.
 constexpr AqiLevel classifyAqi(int aqi) {
   return aqi < 0     ? AqiLevel::Unknown

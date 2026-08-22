@@ -71,6 +71,25 @@ void test_bar_widths_are_clamped() {
   TEST_ASSERT_EQUAL_UINT8(0, sdd::humidityBarWidth(-1));
   TEST_ASSERT_EQUAL_UINT8(50, sdd::humidityBarWidth(100));
   TEST_ASSERT_EQUAL_UINT8(50, sdd::humidityBarWidth(101));
+  TEST_ASSERT_EQUAL_UINT8(0, sdd::codexRemainingBarWidth(-1));
+  TEST_ASSERT_EQUAL_UINT8(0, sdd::codexRemainingBarWidth(0));
+  TEST_ASSERT_EQUAL_UINT8(25, sdd::codexRemainingBarWidth(50));
+  TEST_ASSERT_EQUAL_UINT8(50, sdd::codexRemainingBarWidth(100));
+  TEST_ASSERT_EQUAL_UINT8(50, sdd::codexRemainingBarWidth(101));
+}
+
+void test_codex_reset_display_rounds_up_naturally() {
+  sdd::CodexResetDisplay display = sdd::codexResetDisplay(45);
+  TEST_ASSERT_EQUAL_UINT32(45, display.value);
+  TEST_ASSERT_TRUE(display.unit == sdd::CodexResetUnit::Minutes);
+
+  display = sdd::codexResetDisplay(61);
+  TEST_ASSERT_EQUAL_UINT32(2, display.value);
+  TEST_ASSERT_TRUE(display.unit == sdd::CodexResetUnit::Hours);
+
+  display = sdd::codexResetDisplay(24UL * 60UL + 1UL);
+  TEST_ASSERT_EQUAL_UINT32(2, display.value);
+  TEST_ASSERT_TRUE(display.unit == sdd::CodexResetUnit::Days);
 }
 
 void test_aqi_boundaries_follow_the_chinese_index() {
@@ -121,6 +140,7 @@ int run_display_logic_tests() {
   RUN_TEST(test_decimal_temperature_parsing);
   RUN_TEST(test_tianapi_date_validation);
   RUN_TEST(test_bar_widths_are_clamped);
+  RUN_TEST(test_codex_reset_display_rounds_up_naturally);
   RUN_TEST(test_aqi_boundaries_follow_the_chinese_index);
   RUN_TEST(test_carousel_skips_empty_pages_and_wraps);
   RUN_TEST(test_carousel_handles_no_available_pages);

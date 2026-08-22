@@ -8,7 +8,6 @@
 #include "font/ZdyLwFont_20.h"
 #include "font/font_td_20.h"
 #include "font/timeClockFont.h"
-#include "img/humidity.h"
 #include "img/temperature.h"
 #include "weatherNum/img/tianqi/t0.h"
 #include "weatherNum/img/tianqi/t1.h"
@@ -213,7 +212,6 @@ ByteSpan weatherIconAsset(WeatherIcon icon) noexcept {
 }
 
 ByteSpan temperatureIconAsset() noexcept { return span(temperature, sizeof(temperature)); }
-ByteSpan humidityIconAsset() noexcept { return span(humidity, sizeof(humidity)); }
 
 const std::vector<ByteSpan>& animationFrames(AnimationKind kind) noexcept {
   switch (kind) {
