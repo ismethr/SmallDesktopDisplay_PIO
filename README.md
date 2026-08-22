@@ -1,6 +1,6 @@
 # SmallDesktopDisplay
 
-基于 ESP8266 NodeMCU 与 240 × 240 ST7789 彩屏的桌面天气时钟固件。当前版本为 **SDD 1.6.3**，使用 Arduino 框架和 PlatformIO 构建。
+基于 ESP8266 NodeMCU 与 240 × 240 ST7789 彩屏的桌面天气时钟固件。当前版本为 **SDD 1.7.0**，使用 Arduino 框架和 PlatformIO 构建。
 
 > **修改版声明（2026-08-22）：** 本仓库是在
 > [KittenCN/SmallDesktopDisplay_PIO](https://github.com/KittenCN/SmallDesktopDisplay_PIO)
@@ -19,9 +19,10 @@
 - 右下角 JPEG 帧动画，内置太空人、胡桃和初音未来三套资源，也可完全关闭。
 - 可选 DHT11 室内温湿度显示；读数无效时保留上一帧而不绘制 `NaN`。
 - WiFiManager Web 配网，连接失败时开启限时配置门户；也可编译为 SmartConfig 模式。
+- 轻量局域网管理页，可在浏览器中修改 Codex 桥接地址、城市、亮度、刷新间隔和方向，并可立即刷新或重启设备。
 - 配置持久化：亮度、旋转、天气间隔、城市、Codex 桥接地址、DHT 开关和 Wi-Fi 凭据。
 - 串口配置与诊断：状态、空闲堆、最大连续堆块、碎片率、亮度、城市、Codex 桥接地址、方向、刷新周期、立即刷新与重启。
-- 网络请求结束后关闭 Wi-Fi 射频；重连、HTTP 和 NTP 均有明确超时。
+- 默认保持 Wi-Fi 在线以提供局域网管理页；关闭该功能时恢复按刷新周期唤醒射频。重连、HTTP 和 NTP 均有明确超时。
 - 天气横幅按实际字体宽度分段横移；固定日期行不会切换，上游返回字库未覆盖字符时显示 `-`。
 
 ## 硬件与接线
@@ -46,10 +47,23 @@
 1. 固件先读取经过边界校验的 EEPROM 配置。Wi-Fi 数据使用版本号和 CRC16 检查；旧版 32 + 64 字节布局仍可读取，并在下次成功连接后迁移。
 2. 设备尝试连接已保存的网络。默认 Web 配网模式下，失败后开启 `SmallDisplay-<芯片ID>` 配置热点。
 3. 配置门户最多开放 180 秒，可设置城市代码、亮度、天气刷新间隔、屏幕方向、Codex 桥接地址和可选 DHT11。
-4. 联网后依次同步 NTP、天气和 Codex 用量；默认每 10 分钟唤醒更新一次。
+4. 联网后依次同步 NTP、天气和 Codex 用量；默认每 10 分钟更新一次。
 5. 城市代码填 `0` 时通过 IP 自动识别；也可填写 `101xxxxxx` 格式的 9 位 weather.com.cn 城市代码。
 
 配置门户超时或上游不可用时，设备继续以离线界面运行，不会无限卡在主循环中。
+
+## 局域网管理页
+
+默认构建在设备联网后保持 Wi-Fi 在线，可通过以下任一地址访问：
+
+```text
+http://<时钟的局域网IP>/
+http://smalldisplay-<芯片ID>.local/
+```
+
+串口发送 `0x00` 可查看当前 IP。管理页支持修改 Codex 桥接地址、城市代码、亮度、网络刷新间隔和屏幕方向，还可立即刷新或重启设备。保存操作会先完整校验所有参数，再一次性写入 EEPROM；任何参数无效时都不会保存部分设置。
+
+管理页不显示 Wi-Fi 密码或 Codex 登录令牌，修改请求带有每次启动随机生成的页面令牌，并拒绝来自设备当前子网以外的客户端。它不提供用户账号认证，只适合可信家庭局域网；不要在路由器上把设备的 `80` 端口映射到公网。若不需要管理页，可将 `LAN_ADMIN_ENABLED` 设为 `0`，固件会恢复网络请求结束后关闭 Wi-Fi 射频的行为。
 
 ## 数据源与安全边界
 
@@ -57,6 +71,7 @@
 - 天气与城市：weather.com.cn 的 HTTP 接口。该接口不提供 TLS，因此天气数据没有传输完整性保证；失败或格式变化时保留已有画面。
 - Codex 用量：[`tools/codex_usage_bridge`](tools/codex_usage_bridge/README.md) 在 Mac 上读取本机 Codex 登录凭据，通过 ChatGPT 客户端使用的用量接口获取数据。ESP8266 只访问局域网内的百分比 JSON，永远不会收到 OAuth 令牌。该上游不是公开稳定 API，格式变化时可能需要更新桥接程序。
 - Codex 桥接默认没有访问认证，只应运行在可信局域网；不要将 `8766` 端口映射到公网。桥接只把令牌发送至经 TLS 验证的 `chatgpt.com`，对设备隐藏本机路径与详细错误。
+- 局域网管理页只接受设备当前子网内的连接，并使用页面令牌防止跨站表单提交；它没有账号认证，不应暴露到公网或不受信任的局域网。
 - Wi-Fi 密码存储于 ESP8266 EEPROM 模拟区，未做静态加密；具备芯片物理访问能力的人员仍可能读取。
 - 配网热点当前不设密码，但使用设备唯一 SSID 且仅在连接失败时限时开放。请在可信环境中完成首次配置。
 
@@ -76,7 +91,7 @@ pio device monitor -b 115200
 - `.pio/build/esp12e/firmware.elf`：符号和调试信息；
 - `.pio/build/esp12e/firmware.hex`：由 `extra_script.py` 额外生成，供需要 Intel HEX 的烧录流程使用。
 
-当前默认构建使用 40,240 B RAM（49.1%）和 767,084 B 应用分区 Flash（73.4%），`firmware.bin` 为 771,232 B。移除农历网络模块、室外湿度显示并精简固定日期字库后，仍保留了扩展空间。CI 对默认 `firmware.bin` 设置 925,000 B 上限；新增图片、字体或依赖前仍须重新检查容量。
+当前默认构建使用 41,064 B RAM（50.1%）和 801,192 B 应用分区 Flash（76.7%），`firmware.bin` 为 805,344 B。移除农历网络模块、室外湿度显示并精简固定日期字库后，仍保留了扩展空间。CI 对默认 `firmware.bin` 设置 925,000 B 上限；新增图片、字体或依赖前仍须重新检查容量。
 
 固件内的 JPEG 全部来自 `PROGMEM` 数组，因此项目固定使用 `lib/TJpg_Decoder_ArrayOnly`：Tiny JPEG 解码核心与上游 1.1.0 字节一致，只移除了从未使用的 LittleFS/SPIFFS/SD 文件接口。离线文件系统并不是本项目的固件功能。
 
@@ -105,6 +120,7 @@ pio device monitor -b 115200
 | `ANIMATION_CHOICE` | `3` | `0` 关闭，`1` 太空人，`2` 胡桃，`3` 初音未来 |
 | `WEB_CONFIG_ENABLED` | `1` | `1` 使用 WiFiManager，`0` 使用 SmartConfig |
 | `DHT_ENABLED` | `0` | 是否编译 DHT11 室内温湿度功能 |
+| `LAN_ADMIN_ENABLED` | `1` | 是否保持 Wi-Fi 在线并提供局域网管理页 |
 | `DEFAULT_WEATHER_INTERVAL_MINUTES` | `10` | EEPROM 尚无有效值时的更新周期 |
 
 ## 串口命令
@@ -162,6 +178,7 @@ pio run -e esp12e_dht
 pio run -e esp12e_no_animation
 pio run -e esp12e_astronaut
 pio run -e esp12e_hutao
+pio run -e esp12e_no_admin
 ```
 
 连接硬件后可去掉 `--without-testing` 并指定上传/测试串口，以实际执行 Unity 断言。发布前还应在真机检查屏幕颜色和旋转、背光、配网/重置、天气和 NTP 失败恢复、DHT、按钮，以及至少 24 小时的空闲堆和重连稳定性。本仓库的自动验证只能证明编译、纯逻辑边界和工具行为，不能替代真机验收。

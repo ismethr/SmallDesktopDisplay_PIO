@@ -11,14 +11,21 @@
 #ifndef DHT_ENABLED
 #define DHT_ENABLED 0
 #endif
+#ifndef LAN_ADMIN_ENABLED
+#define LAN_ADMIN_ENABLED 1
+#endif
 
 // Compatibility aliases used by the original modules.
 #define Animate_Choice ANIMATION_CHOICE
 #define WM_EN WEB_CONFIG_ENABLED
 #define DHT_EN DHT_ENABLED
+#define ADMIN_WEB_EN LAN_ADMIN_ENABLED
 
 #if ANIMATION_CHOICE < 0 || ANIMATION_CHOICE > 3
 #error "ANIMATION_CHOICE must be between 0 and 3"
+#endif
+#if LAN_ADMIN_ENABLED != 0 && LAN_ADMIN_ENABLED != 1
+#error "LAN_ADMIN_ENABLED must be 0 or 1"
 #endif
 
 #define TMS 1000UL

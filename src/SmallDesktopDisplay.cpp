@@ -42,12 +42,15 @@
 #include <limits.h>
 
 #include "config.h"                  //配置文件
+#if ADMIN_WEB_EN
+#include <ESP8266mDNS.h>
+#endif
 #include "weatherNum/weatherNum.h"   //天气图库
 #include "Animate/Animate.h"         //动画模块
 #include "font/font_td_20.h"         //字体库
 #include "core/DisplayLogic.h"       //纯逻辑与边界校验
 
-#define Version "SDD V1.6.3"
+#define Version "SDD V1.7.0"
 /* *****************************************************************
  *  配置使能位
  * *****************************************************************/
@@ -105,6 +108,10 @@ void digitalClockDisplay(int reflash_en);
 void reflashBanner();
 void drawCodexUsage();
 void updateCodexBanner();
+#if ADMIN_WEB_EN
+void startAdminServer();
+void serviceAdminWeb();
+#endif
 extern int Hour_sign;
 extern int Minute_sign;
 extern int Second_sign;
@@ -227,6 +234,16 @@ WiFiUDP Udp;
 WiFiClient wificlient;
 unsigned int localPort = 8000;
 unsigned long wifiWakeStartedAt = 0;
+#if ADMIN_WEB_EN
+ESP8266WebServer adminServer(80);
+bool adminServerStarted = false;
+bool adminMdnsStarted = false;
+bool adminRefreshRequested = false;
+bool adminRestartRequested = false;
+unsigned long adminRestartRequestedAt = 0;
+String adminCsrfToken;
+String adminHostname;
+#endif
 enum class NetworkRefreshStage : uint8_t
 {
   Idle,
@@ -758,6 +775,16 @@ void printDeviceStatus()
   }
   else
     mySerialPrintln("unavailable");
+#if ADMIN_WEB_EN
+  mySerialPrint("LAN admin: ");
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    mySerialPrint("http://");
+    mySerialPrintln(WiFi.localIP());
+  }
+  else
+    mySerialPrintln("unavailable while WiFi is disconnected");
+#endif
 }
 
 // 串口调试设置函数
@@ -1370,6 +1397,332 @@ void saveParamCallback()
   // 所有写入在此处一次性提交，减少擦写
   EEPROM.commit();
   delay(5);
+}
+#endif
+
+#if ADMIN_WEB_EN
+String adminHtmlEscape(const String &value)
+{
+  String escaped;
+  escaped.reserve(value.length() + 8);
+  for (size_t i = 0; i < value.length(); i++)
+  {
+    switch (value[i])
+    {
+      case '&': escaped += F("&amp;"); break;
+      case '<': escaped += F("&lt;"); break;
+      case '>': escaped += F("&gt;"); break;
+      case '"': escaped += F("&quot;"); break;
+      case '\'': escaped += F("&#39;"); break;
+      default: escaped += value[i]; break;
+    }
+  }
+  return escaped;
+}
+
+bool adminClientIsLocal()
+{
+  const IPAddress remote = adminServer.client().remoteIP();
+  const IPAddress local = WiFi.localIP();
+  const IPAddress mask = WiFi.subnetMask();
+  for (uint8_t i = 0; i < 4; i++)
+  {
+    if ((remote[i] & mask[i]) != (local[i] & mask[i]))
+      return false;
+  }
+  return true;
+}
+
+void addAdminSecurityHeaders()
+{
+  adminServer.sendHeader(F("Cache-Control"), F("no-store"));
+  adminServer.sendHeader(F("X-Content-Type-Options"), F("nosniff"));
+  adminServer.sendHeader(F("X-Frame-Options"), F("DENY"));
+  adminServer.sendHeader(F("Content-Security-Policy"),
+                         F("default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'"));
+}
+
+void sendAdminText(int status, const String &message)
+{
+  addAdminSecurityHeaders();
+  adminServer.send(status, F("text/plain; charset=utf-8"), message);
+}
+
+bool authorizeAdminGet()
+{
+  if (WiFi.status() != WL_CONNECTED || !adminClientIsLocal())
+  {
+    sendAdminText(403, F("仅允许同一局域网访问"));
+    return false;
+  }
+  return true;
+}
+
+bool authorizeAdminPost()
+{
+  if (!authorizeAdminGet())
+    return false;
+  if (!adminServer.hasArg("token") || adminServer.arg("token") != adminCsrfToken)
+  {
+    sendAdminText(403, F("页面已过期，请返回首页重试"));
+    return false;
+  }
+  return true;
+}
+
+long storedCitySetting()
+{
+  long stored = 0;
+  for (int cnum = 5; cnum > 0; cnum--)
+    stored = stored * 100 + EEPROM.read(CC_addr + cnum - 1);
+  return sdd::isValidCityCode(stored) ? stored : 0;
+}
+
+void sendAdminPage(const String &notice = "", bool error = false)
+{
+  if (!authorizeAdminGet())
+    return;
+
+  String page;
+  page.reserve(6200);
+  page += F("<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>桌面时钟管理</title><style>"
+            ":root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}"
+            "body{margin:0;background:#0b0d10;color:#f4f6f8}main{max-width:620px;margin:auto;padding:22px}"
+            "h1{font-size:25px;margin:5px 0 8px}.sub{color:#9aa4af;margin:0 0 20px;line-height:1.6}"
+            ".card{background:#15191f;border:1px solid #2b323b;border-radius:15px;padding:18px;margin:14px 0}"
+            ".notice{border-color:#257b55;background:#10271d}.error{border-color:#a23b3b;background:#321717}"
+            "label{display:block;margin:13px 0 6px;color:#cbd2d9;font-size:14px}"
+            "input,select{box-sizing:border-box;width:100%;padding:11px 12px;border-radius:9px;border:1px solid #3a424d;"
+            "background:#0d1014;color:#fff;font-size:16px}button{border:0;border-radius:9px;padding:11px 16px;"
+            "background:#36a269;color:white;font-size:15px;font-weight:600;cursor:pointer}"
+            ".secondary{background:#39414c}.danger{background:#a94444}.actions{display:flex;gap:10px;flex-wrap:wrap}"
+            ".actions form{margin:0}.meta{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;font-size:14px}"
+            ".meta span:nth-child(odd){color:#89939e}.meta span:nth-child(even){overflow-wrap:anywhere}"
+            "small{color:#89939e;display:block;margin-top:7px;line-height:1.5}</style></head><body><main>"
+            "<h1>桌面时钟管理</h1><p class='sub'>仅限当前局域网访问 · ");
+  page += adminHtmlEscape(WiFi.localIP().toString());
+  page += F("</p>");
+
+  if (notice.length())
+  {
+    page += F("<div class='card ");
+    page += error ? F("error") : F("notice");
+    page += F("'>");
+    page += adminHtmlEscape(notice);
+    page += F("</div>");
+  }
+
+  page += F("<div class='card meta'><span>版本</span><span>");
+  page += Version;
+  page += F("</span><span>Wi-Fi</span><span>");
+  page += adminHtmlEscape(WiFi.SSID());
+  page += F("</span><span>Codex 剩余</span><span>");
+  page += codexUsage.valid ? String(codexUsage.remainingPercent) + "%" : "--";
+  page += F("</span><span>访问地址</span><span>http://");
+  page += adminHtmlEscape(adminHostname);
+  page += F(".local/</span></div>");
+
+  page += F("<form class='card' method='post' action='/save'><input type='hidden' name='token' value='");
+  page += adminCsrfToken;
+  page += F("'><label for='codex'>Codex 桥接地址</label><input id='codex' name='codex' maxlength='63' value='");
+  page += adminHtmlEscape(String(codexBridgeHost));
+  page += F("' placeholder='192.168.1.10:8766'><small>留空可关闭 Codex 用量显示。</small>"
+            "<label for='city'>城市代码</label><input id='city' name='city' inputmode='numeric' maxlength='9' value='");
+  page += String(storedCitySetting());
+  page += F("'><small>填写 9 位 weather.com.cn 城市代码；0 表示自动识别。</small>"
+            "<label for='brightness'>屏幕亮度（0–100）</label><input id='brightness' name='brightness' "
+            "type='number' min='0' max='100' value='");
+  page += String(LCD_BL_PWM);
+  page += F("'><label for='interval'>网络刷新间隔（分钟）</label><input id='interval' name='interval' "
+            "type='number' min='1' max='60' value='");
+  page += String(weatherUpdateIntervalMinutes);
+  page += F("'><label for='rotation'>屏幕方向</label><select id='rotation' name='rotation'>");
+  const char *const rotationLabels[] = {"USB 接口朝下", "USB 接口朝右", "USB 接口朝上", "USB 接口朝左"};
+  for (int rotation = 0; rotation < 4; rotation++)
+  {
+    page += F("<option value='");
+    page += String(rotation);
+    page += F("'");
+    if (rotation == LCD_Rotation)
+      page += F(" selected");
+    page += F(">");
+    page += rotationLabels[rotation];
+    page += F("</option>");
+  }
+  page += F("</select><br><button type='submit'>保存并刷新</button></form>"
+            "<div class='card'><div class='actions'><form method='post' action='/refresh'>"
+            "<input type='hidden' name='token' value='");
+  page += adminCsrfToken;
+  page += F("'><button class='secondary' type='submit'>立即刷新</button></form>"
+            "<form method='post' action='/reboot'><input type='hidden' name='token' value='");
+  page += adminCsrfToken;
+  page += F("'><button class='danger' type='submit'>重启设备</button></form></div>"
+            "<small>不要把设备的 80 端口映射到公网。</small></div></main></body></html>");
+
+  addAdminSecurityHeaders();
+  adminServer.send(error ? 400 : 200, F("text/html; charset=utf-8"), page);
+}
+
+void handleAdminSave()
+{
+  if (!authorizeAdminPost())
+    return;
+
+  int newCity = 0;
+  int newBrightness = 0;
+  int newInterval = 0;
+  int newRotation = 0;
+  String newCodexHost = adminServer.arg("codex");
+  newCodexHost.trim();
+  const bool valid = adminServer.hasArg("city") && adminServer.hasArg("brightness") &&
+                     adminServer.hasArg("interval") && adminServer.hasArg("rotation") &&
+                     parseStrictInt(adminServer.arg("city"), newCity) && sdd::isValidCityCode(newCity) &&
+                     parseStrictInt(adminServer.arg("brightness"), newBrightness) &&
+                         sdd::isValidBrightness(newBrightness) &&
+                     parseStrictInt(adminServer.arg("interval"), newInterval) &&
+                         sdd::isValidWeatherInterval(newInterval) &&
+                     parseStrictInt(adminServer.arg("rotation"), newRotation) &&
+                         sdd::isValidRotation(newRotation) &&
+                     isValidCodexBridgeHost(newCodexHost);
+  if (!valid)
+  {
+    sendAdminPage(F("参数格式不正确，设置没有保存。"), true);
+    return;
+  }
+
+  const bool rotationChanged = LCD_Rotation != newRotation;
+  const bool codexHostChanged = newCodexHost != String(codexBridgeHost);
+  int cityBytes = newCity;
+  for (int cnum = 0; cnum < 5; cnum++)
+  {
+    EEPROM.write(CC_addr + cnum, cityBytes % 100);
+    cityBytes /= 100;
+  }
+  EEPROM.write(BL_addr, newBrightness);
+  EEPROM.write(Ro_addr, newRotation);
+  EEPROM.write(WeatherInterval_addr, newInterval);
+  stageCodexBridgeHost(newCodexHost);
+  EEPROM.commit();
+
+  cityCode = String(newCity);
+  weatherUpdateIntervalMinutes = newInterval;
+  updateWeatherInterval();
+  applyBacklight(newBrightness);
+  LCD_Rotation = newRotation;
+  if (codexHostChanged)
+  {
+    codexUsage = CodexUsageState();
+    updateCodexBanner();
+  }
+  if (rotationChanged)
+  {
+    tft.setRotation(LCD_Rotation);
+    tft.fillScreen(TFT_BLACK);
+    Hour_sign = Minute_sign = Second_sign = 60;
+    digitalClockDisplay(1);
+    reflashBanner();
+    TJpgDec.drawJpg(15, 183, temperature, sizeof(temperature));
+  }
+  drawCodexUsage();
+  adminRefreshRequested = true;
+  sendAdminPage(F("设置已保存，正在刷新网络数据。"));
+}
+
+void handleAdminRefresh()
+{
+  if (!authorizeAdminPost())
+    return;
+  adminRefreshRequested = true;
+  sendAdminPage(F("已安排立即刷新。"));
+}
+
+void handleAdminReboot()
+{
+  if (!authorizeAdminPost())
+    return;
+  adminRestartRequested = true;
+  adminRestartRequestedAt = millis();
+  sendAdminPage(F("设备即将重启，请稍后重新打开此页面。"));
+}
+
+void handleAdminStatus()
+{
+  if (!authorizeAdminGet())
+    return;
+  DynamicJsonDocument statusDoc(512);
+  statusDoc["ok"] = true;
+  statusDoc["version"] = Version;
+  statusDoc["ip"] = WiFi.localIP().toString();
+  statusDoc["uptime_ms"] = millis();
+  statusDoc["free_heap"] = ESP.getFreeHeap();
+  statusDoc["city_code"] = cityCode;
+  statusDoc["refresh_minutes"] = weatherUpdateIntervalMinutes;
+  statusDoc["codex_bridge"] = codexBridgeHost;
+  statusDoc["codex_ready"] = codexUsage.valid;
+  if (codexUsage.valid)
+    statusDoc["codex_remaining_percent"] = codexUsage.remainingPercent;
+  String body;
+  serializeJson(statusDoc, body);
+  addAdminSecurityHeaders();
+  adminServer.send(200, F("application/json; charset=utf-8"), body);
+}
+
+void startAdminServer()
+{
+  if (WiFi.status() != WL_CONNECTED)
+    return;
+  if (adminHostname.length() == 0)
+    adminHostname = "smalldisplay-" + String(ESP.getChipId(), HEX);
+  if (adminCsrfToken.length() == 0)
+  {
+    char token[17];
+    snprintf(token, sizeof(token), "%08lx%08lx",
+             static_cast<unsigned long>(ESP.random()),
+             static_cast<unsigned long>(ESP.random() ^ ESP.getChipId()));
+    adminCsrfToken = token;
+  }
+  if (!adminServerStarted)
+  {
+    adminServer.on("/", HTTP_GET, []() { sendAdminPage(); });
+    adminServer.on("/save", HTTP_POST, handleAdminSave);
+    adminServer.on("/refresh", HTTP_POST, handleAdminRefresh);
+    adminServer.on("/reboot", HTTP_POST, handleAdminReboot);
+    adminServer.on("/api/status", HTTP_GET, handleAdminStatus);
+    adminServer.onNotFound([]() { sendAdminText(404, F("Not found")); });
+    adminServer.begin();
+    adminServerStarted = true;
+    mySerialPrint("LAN admin: http://");
+    mySerialPrintln(WiFi.localIP());
+  }
+  if (!adminMdnsStarted && MDNS.begin(adminHostname.c_str()))
+  {
+    MDNS.addService("http", "tcp", 80);
+    adminMdnsStarted = true;
+    mySerialPrint("LAN admin mDNS: http://");
+    mySerialPrint(adminHostname);
+    mySerialPrintln(".local/");
+  }
+}
+
+void serviceAdminWeb()
+{
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    startAdminServer();
+    adminServer.handleClient();
+    if (adminMdnsStarted)
+      MDNS.update();
+  }
+
+  if (adminRestartRequested && millis() - adminRestartRequestedAt >= 750UL)
+    ESP.restart();
+  if (adminRefreshRequested && networkRefreshStage == NetworkRefreshStage::Idle)
+  {
+    adminRefreshRequested = false;
+    openWifi();
+  }
 }
 #endif
 
@@ -2426,7 +2779,10 @@ void WIFI_reflash_All()
       networkRefreshStage = NetworkRefreshStage::Weather;
       break;
     case NetworkRefreshStage::Weather:
-      getCityWeather();
+      if (cityCode == "0")
+        getCityCode();
+      else
+        getCityWeather();
       networkRefreshStage = NetworkRefreshStage::CodexUsage;
       break;
     case NetworkRefreshStage::CodexUsage:
@@ -2445,9 +2801,19 @@ void WIFI_reflash_All()
 void openWifi()
 {
   mySerialPrintln("WIFI reset......");
+#if ADMIN_WEB_EN
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    wifiWakeStartedAt = millis();
+    Wifi_en = 1;
+    networkRefreshStage = NetworkRefreshStage::SyncTime;
+    return;
+  }
+#endif
   WiFi.forceSleepWake(); // wifi on
   delay(1);
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   if (strlen(wificonf.stassid))
     WiFi.begin(wificonf.stassid, wificonf.stapsw);
   else
@@ -2461,12 +2827,22 @@ void openWifi()
 void closeWifi()
 {
   Udp.stop();
+#if ADMIN_WEB_EN
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  WiFi.setAutoReconnect(true);
+  Wifi_en = 1;
+  wifiWakeStartedAt = 0;
+  networkRefreshStage = NetworkRefreshStage::Idle;
+  startAdminServer();
+  mySerialPrintln("WIFI online for LAN admin");
+#else
   WiFi.forceSleepBegin(); // Wifi Off
   delay(1);
   mySerialPrintln("WIFI sleep......");
   Wifi_en = 0;
   wifiWakeStartedAt = 0;
   networkRefreshStage = NetworkRefreshStage::Idle;
+#endif
 }
 
 // 守护线程池
@@ -2514,6 +2890,8 @@ void setup()
   readwificonfig(); // 读取存储的wifi信息
   mySerialPrint("Connecting to WIFI");
   mySerialPrintln(wificonf.stassid);
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(wificonf.stassid, wificonf.stapsw);
 
   TJpgDec.setJpgScale(1);
@@ -2624,6 +3002,9 @@ void refresh_AnimatedImage()
 
 void loop()
 {
+#if ADMIN_WEB_EN
+  serviceAdminWeb();
+#endif
   // refresh_AnimatedImage(&TJpgDec); //更新右下角
   Supervisor_controller(); // 守护线程池（包含动画刷新）
   WIFI_reflash_All();      // WIFI应用

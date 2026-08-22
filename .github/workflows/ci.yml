@@ -17,6 +17,7 @@ jobs:
           - esp12e_no_animation
           - esp12e_astronaut
           - esp12e_hutao
+          - esp12e_no_admin
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
