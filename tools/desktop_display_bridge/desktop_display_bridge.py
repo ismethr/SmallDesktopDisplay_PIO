@@ -1,0 +1,604 @@
+#!/usr/bin/env python3
+"""Run the Codex usage endpoint and USB Mac monitor from one process."""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+from dataclasses import asdict, dataclass, replace
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler
+from pathlib import Path
+from typing import Any, Mapping, Protocol
+
+try:
+    import psutil  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - exercised by the startup guard
+    psutil = None  # type: ignore[assignment]
+
+try:
+    import serial  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - exercised by the startup guard
+    serial = None  # type: ignore[assignment]
+
+
+TOOLS_DIR = Path(__file__).resolve().parents[1]
+CODEX_BRIDGE_DIR = TOOLS_DIR / "codex_usage_bridge"
+if str(CODEX_BRIDGE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODEX_BRIDGE_DIR))
+
+import codex_usage_bridge as codex  # noqa: E402
+
+
+DEFAULT_SERIAL_BAUD = 115200
+DEFAULT_SAMPLE_SECONDS = 1.0
+DEFAULT_MACMON_PATH = Path("/opt/homebrew/bin/macmon")
+DEFAULT_RECONNECT_SECONDS = 2.0
+DEFAULT_TEMPERATURE_MAX_AGE = 10.0
+FRAME_PREFIX = "MSD1"
+MISSING_TEMPERATURE = -32768
+ROUTE_COMMAND = ("/sbin/route", "-n", "get", "default")
+
+
+class NetCounters(Protocol):
+    bytes_recv: int
+    bytes_sent: int
+
+
+@dataclass(frozen=True)
+class MacStatusSnapshot:
+    schema: int = 1
+    valid: bool = False
+    sequence: int = 0
+    cpu_percent: float = 0.0
+    memory_percent: float = 0.0
+    cpu_temperature_c: float | None = None
+    download_bps: int = 0
+    upload_bps: int = 0
+    interface: str | None = None
+    sampled_at: int | None = None
+    error: str | None = "waiting for first sample"
+
+    def as_public_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["ok"] = payload.pop("valid")
+        return payload
+
+
+class MacStatusState:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._snapshot = MacStatusSnapshot()
+
+    def get(self) -> MacStatusSnapshot:
+        with self._lock:
+            return self._snapshot
+
+    def set(self, snapshot: MacStatusSnapshot) -> None:
+        with self._lock:
+            self._snapshot = snapshot
+
+    def set_error(self, message: str) -> None:
+        with self._lock:
+            if self._snapshot.valid:
+                self._snapshot = replace(self._snapshot, error=message)
+            else:
+                self._snapshot = MacStatusSnapshot(error=message)
+
+
+@dataclass(frozen=True)
+class UsbSnapshot:
+    connected: bool = False
+    port: str | None = None
+    last_sent_at: int | None = None
+    error: str | None = "waiting for USB display"
+
+    def as_public_dict(self) -> dict[str, Any]:
+        return {
+            "connected": self.connected,
+            "port": Path(self.port).name if self.port else None,
+            "last_sent_at": self.last_sent_at,
+            "error": self.error,
+        }
+
+
+class UsbState:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._snapshot = UsbSnapshot()
+
+    def get(self) -> UsbSnapshot:
+        with self._lock:
+            return self._snapshot
+
+    def set(self, snapshot: UsbSnapshot) -> None:
+        with self._lock:
+            self._snapshot = snapshot
+
+
+def crc16_ccitt(data: bytes) -> int:
+    """CRC-16/CCITT-FALSE used by both the Mac and ESP8266."""
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return crc
+
+
+def _bounded_tenths(value: float, low: int, high: int) -> int:
+    if not math.isfinite(value):
+        return low
+    return max(low, min(high, int(round(value * 10.0))))
+
+
+def encode_status_frame(snapshot: MacStatusSnapshot) -> bytes:
+    if not snapshot.valid:
+        raise ValueError("cannot encode an invalid Mac status snapshot")
+    temperature = (
+        MISSING_TEMPERATURE
+        if snapshot.cpu_temperature_c is None
+        else _bounded_tenths(snapshot.cpu_temperature_c, -400, 1500)
+    )
+    payload = ",".join(
+        (
+            FRAME_PREFIX,
+            str(snapshot.sequence & 0xFFFF),
+            str(_bounded_tenths(snapshot.cpu_percent, 0, 1000)),
+            str(_bounded_tenths(snapshot.memory_percent, 0, 1000)),
+            str(temperature),
+            str(max(0, min(0xFFFFFFFF, int(snapshot.download_bps)))),
+            str(max(0, min(0xFFFFFFFF, int(snapshot.upload_bps)))),
+        )
+    )
+    checksum = crc16_ccitt(payload.encode("ascii"))
+    return f"${payload}*{checksum:04X}\n".encode("ascii")
+
+
+def parse_default_route_interface(output: str) -> str | None:
+    match = re.search(r"^\s*interface:\s*(\S+)\s*$", output, flags=re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def default_route_interface(timeout: float = 2.0) -> str | None:
+    try:
+        result = subprocess.run(
+            ROUTE_COMMAND,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return parse_default_route_interface(result.stdout) if result.returncode == 0 else None
+
+
+def choose_network_interface(counters: Mapping[str, NetCounters], override: str | None) -> str | None:
+    if override:
+        return override if override in counters else None
+    routed = default_route_interface()
+    if routed in counters:
+        return routed
+    if "en0" in counters:
+        return "en0"
+    candidates = ((name, item) for name, item in counters.items() if name != "lo0")
+    return max(candidates, key=lambda pair: pair[1].bytes_recv + pair[1].bytes_sent, default=(None, None))[0]
+
+
+def _parse_macmon_temperature(line: str) -> float | None:
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    temp = payload.get("temp") if isinstance(payload, dict) else None
+    value = temp.get("cpu_temp_avg") if isinstance(temp, dict) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    result = float(value)
+    return result if math.isfinite(result) and -40.0 <= result <= 150.0 else None
+
+
+class MacmonTemperatureReader:
+    def __init__(
+        self,
+        executable: Path,
+        stop_event: threading.Event,
+        interval_ms: int = 1000,
+        max_age: float = DEFAULT_TEMPERATURE_MAX_AGE,
+    ) -> None:
+        self._executable = executable
+        self._stop_event = stop_event
+        self._interval_ms = interval_ms
+        self._max_age = max_age
+        self._lock = threading.Lock()
+        self._temperature: float | None = None
+        self._updated_monotonic = 0.0
+        self._process: subprocess.Popen[str] | None = None
+        self._thread = threading.Thread(target=self._run, name="macmon-temperature", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def get(self) -> float | None:
+        with self._lock:
+            if time.monotonic() - self._updated_monotonic > self._max_age:
+                return None
+            return self._temperature
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        process = self._process
+        if process is not None and process.poll() is None:
+            process.terminate()
+        self._thread.join(timeout=3)
+        if process is not None and process.poll() is None:
+            process.kill()
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                process = subprocess.Popen(
+                    [str(self._executable), "-i", str(self._interval_ms), "pipe"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    bufsize=1,
+                )
+            except OSError as exc:
+                print(f"[desktop-bridge] macmon unavailable: {exc}", file=sys.stderr, flush=True)
+                self._stop_event.wait(10)
+                continue
+
+            self._process = process
+            assert process.stdout is not None
+            for line in process.stdout:
+                if self._stop_event.is_set():
+                    break
+                temperature = _parse_macmon_temperature(line)
+                if temperature is not None:
+                    with self._lock:
+                        self._temperature = temperature
+                        self._updated_monotonic = time.monotonic()
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+            self._process = None
+            if not self._stop_event.is_set():
+                print("[desktop-bridge] macmon stopped; retrying", file=sys.stderr, flush=True)
+                self._stop_event.wait(5)
+
+
+def sample_mac_status_loop(
+    state: MacStatusState,
+    temperature: MacmonTemperatureReader,
+    stop_event: threading.Event,
+    interval: float,
+    network_override: str | None,
+) -> None:
+    assert psutil is not None
+    psutil.cpu_percent(interval=None)
+    interface: str | None = None
+    previous: NetCounters | None = None
+    previous_at = time.monotonic()
+    sequence = 0
+    next_interface_refresh = 0.0
+
+    while not stop_event.wait(interval):
+        now_mono = time.monotonic()
+        per_interface = psutil.net_io_counters(pernic=True)
+        if interface not in per_interface or now_mono >= next_interface_refresh:
+            selected = choose_network_interface(per_interface, network_override)
+            if selected != interface:
+                previous = None
+            interface = selected
+            next_interface_refresh = now_mono + 30.0
+
+        current = per_interface.get(interface) if interface else None
+        elapsed = max(0.001, now_mono - previous_at)
+        download_bps = 0
+        upload_bps = 0
+        if current is not None and previous is not None:
+            download_bps = max(0, int((current.bytes_recv - previous.bytes_recv) / elapsed))
+            upload_bps = max(0, int((current.bytes_sent - previous.bytes_sent) / elapsed))
+        previous = current
+        previous_at = now_mono
+
+        snapshot = MacStatusSnapshot(
+            valid=True,
+            sequence=sequence,
+            cpu_percent=max(0.0, min(100.0, float(psutil.cpu_percent(interval=None)))),
+            memory_percent=max(0.0, min(100.0, float(psutil.virtual_memory().percent))),
+            cpu_temperature_c=temperature.get(),
+            download_bps=download_bps,
+            upload_bps=upload_bps,
+            interface=interface,
+            sampled_at=int(time.time()),
+            error=None if interface else "network interface unavailable",
+        )
+        state.set(snapshot)
+        sequence = (sequence + 1) & 0xFFFF
+
+
+def discover_serial_port(explicit_port: str | None) -> tuple[str | None, str | None]:
+    if explicit_port:
+        return (explicit_port, None) if Path(explicit_port).exists() else (None, "configured USB port not found")
+    patterns = (
+        "/dev/cu.usbserial-*",
+        "/dev/cu.wchusbserial*",
+        "/dev/cu.SLAB_USBtoUART*",
+    )
+    ports = sorted({path for pattern in patterns for path in glob.glob(pattern)})
+    if len(ports) == 1:
+        return ports[0], None
+    if not ports:
+        return None, "USB display not connected"
+    return None, "multiple USB serial devices; configure DESKTOP_BRIDGE_SERIAL_PORT"
+
+
+def serial_writer_loop(
+    status_state: MacStatusState,
+    usb_state: UsbState,
+    stop_event: threading.Event,
+    explicit_port: str | None,
+    baud: int,
+    reconnect_seconds: float = DEFAULT_RECONNECT_SECONDS,
+) -> None:
+    assert serial is not None
+    active = None
+    last_sequence: int | None = None
+    last_error: str | None = None
+
+    while not stop_event.is_set():
+        if active is None:
+            port, error = discover_serial_port(explicit_port)
+            if port is None:
+                usb_state.set(UsbSnapshot(error=error))
+                if error != last_error:
+                    print(f"[desktop-bridge] {error}", file=sys.stderr, flush=True)
+                    last_error = error
+                stop_event.wait(reconnect_seconds)
+                continue
+            try:
+                active = serial.Serial(port, baudrate=baud, timeout=0.2, write_timeout=1.0)
+                active.dtr = False
+                active.rts = False
+                active.reset_input_buffer()
+                stop_event.wait(2.0)  # ESP8266 boards commonly reset when the port opens.
+                usb_state.set(UsbSnapshot(connected=True, port=port, error=None))
+                print(f"[desktop-bridge] USB display connected: {port}", file=sys.stderr, flush=True)
+                last_error = None
+                last_sequence = None
+            except (OSError, serial.SerialException) as exc:
+                active = None
+                message = f"cannot open USB display: {exc}"
+                usb_state.set(UsbSnapshot(port=port, error="cannot open USB display"))
+                if message != last_error:
+                    print(f"[desktop-bridge] {message}", file=sys.stderr, flush=True)
+                    last_error = message
+                stop_event.wait(reconnect_seconds)
+                continue
+
+        snapshot = status_state.get()
+        if not snapshot.valid or snapshot.sequence == last_sequence:
+            stop_event.wait(0.1)
+            continue
+        try:
+            active.write(encode_status_frame(snapshot))
+            active.flush()
+            last_sequence = snapshot.sequence
+            usb_state.set(
+                UsbSnapshot(
+                    connected=True,
+                    port=active.port,
+                    last_sent_at=int(time.time()),
+                    error=None,
+                )
+            )
+        except (OSError, serial.SerialException) as exc:
+            port = getattr(active, "port", None)
+            try:
+                active.close()
+            except (OSError, serial.SerialException):
+                pass
+            active = None
+            usb_state.set(UsbSnapshot(port=port, error="USB display disconnected"))
+            print(f"[desktop-bridge] USB display disconnected: {exc}", file=sys.stderr, flush=True)
+            stop_event.wait(reconnect_seconds)
+
+    if active is not None:
+        active.close()
+
+
+def make_handler(
+    usage_state: codex.UsageState,
+    status_state: MacStatusState,
+    usb_state: UsbState,
+) -> type[BaseHTTPRequestHandler]:
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "DesktopDisplayBridge/1.0"
+
+        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            path = self.path.split("?", 1)[0]
+            if path == "/v1/codex-usage":
+                self._send_json(usage_state.get().as_public_dict(), HTTPStatus.OK)
+            elif path == "/v1/mac-status":
+                self._send_json(status_state.get().as_public_dict(), HTTPStatus.OK)
+            elif path == "/health":
+                usage = usage_state.get()
+                status = status_state.get()
+                usb = usb_state.get()
+                self._send_json(
+                    {
+                        "ok": True,
+                        "usage_ready": usage.valid,
+                        "usage_stale": usage.stale,
+                        "mac_status_ready": status.valid,
+                        "temperature_ready": status.cpu_temperature_c is not None,
+                        "usb": usb.as_public_dict(),
+                    },
+                    HTTPStatus.OK,
+                )
+            else:
+                self._send_json({"ok": False, "error": "not found"}, HTTPStatus.NOT_FOUND)
+
+        def _send_json(self, payload: Mapping[str, Any], status: HTTPStatus) -> None:
+            body = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+            self.send_response(status.value)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, fmt: str, *args: Any) -> None:
+            print(f"[desktop-bridge] {self.client_address[0]} {fmt % args}", file=sys.stderr)
+
+    return Handler
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--auth-file", type=Path, default=codex.DEFAULT_AUTH_FILE)
+    parser.add_argument("--upstream-url", default=codex.DEFAULT_UPSTREAM_URL)
+    parser.add_argument("--listen-host", default=os.getenv("CODEX_BRIDGE_HOST", codex.DEFAULT_LISTEN_HOST))
+    parser.add_argument(
+        "--listen-port",
+        type=int,
+        default=int(os.getenv("CODEX_BRIDGE_PORT", str(codex.DEFAULT_LISTEN_PORT))),
+    )
+    parser.add_argument(
+        "--refresh-seconds",
+        type=int,
+        default=int(os.getenv("CODEX_BRIDGE_REFRESH_SECONDS", str(codex.DEFAULT_REFRESH_SECONDS))),
+    )
+    parser.add_argument("--timeout", type=float, default=codex.DEFAULT_TIMEOUT_SECONDS)
+    parser.add_argument("--serial-port", default=os.getenv("DESKTOP_BRIDGE_SERIAL_PORT") or None)
+    parser.add_argument(
+        "--network-interface",
+        default=os.getenv("DESKTOP_BRIDGE_NETWORK_INTERFACE") or None,
+    )
+    parser.add_argument(
+        "--macmon-path",
+        type=Path,
+        default=Path(os.getenv("DESKTOP_BRIDGE_MACMON", str(DEFAULT_MACMON_PATH))),
+    )
+    parser.add_argument("--serial-baud", type=int, default=DEFAULT_SERIAL_BAUD)
+    parser.add_argument("--sample-seconds", type=float, default=DEFAULT_SAMPLE_SECONDS)
+    parser.add_argument("--no-usb", action="store_true", help="collect metrics without opening a serial port")
+    return parser
+
+
+def _validate_args(args: argparse.Namespace) -> str | None:
+    if not 1 <= args.listen_port <= 65535:
+        return "listen port must be between 1 and 65535"
+    if args.refresh_seconds < 60:
+        return "Codex refresh interval must be at least 60 seconds"
+    if not 0.25 <= args.sample_seconds <= 10.0:
+        return "sample interval must be between 0.25 and 10 seconds"
+    if not 1200 <= args.serial_baud <= 2_000_000:
+        return "serial baud must be between 1200 and 2000000"
+    return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    args.auth_file = args.auth_file.expanduser()
+    validation_error = _validate_args(args)
+    if validation_error:
+        print(validation_error, file=sys.stderr)
+        return 2
+    if psutil is None:
+        print("psutil is required; install tools/desktop_display_bridge/requirements.txt", file=sys.stderr)
+        return 2
+    if not args.no_usb and serial is None:
+        print("pyserial is required; install tools/desktop_display_bridge/requirements.txt", file=sys.stderr)
+        return 2
+
+    usage_state = codex.UsageState()
+    status_state = MacStatusState()
+    usb_state = UsbState()
+    stop_event = threading.Event()
+    server = codex.BridgeHTTPServer(
+        (args.listen_host, args.listen_port),
+        make_handler(usage_state, status_state, usb_state),
+    )
+    temperature = MacmonTemperatureReader(
+        args.macmon_path,
+        stop_event,
+        interval_ms=max(250, int(args.sample_seconds * 1000)),
+    )
+    temperature.start()
+
+    threads = [
+        threading.Thread(
+            target=codex.refresh_loop,
+            args=(
+                usage_state,
+                stop_event,
+                args.auth_file,
+                args.upstream_url,
+                args.refresh_seconds,
+                args.timeout,
+            ),
+            name="codex-usage-refresh",
+            daemon=True,
+        ),
+        threading.Thread(
+            target=sample_mac_status_loop,
+            args=(
+                status_state,
+                temperature,
+                stop_event,
+                args.sample_seconds,
+                args.network_interface,
+            ),
+            name="mac-status-sampler",
+            daemon=True,
+        ),
+    ]
+    if not args.no_usb:
+        threads.append(
+            threading.Thread(
+                target=serial_writer_loop,
+                args=(status_state, usb_state, stop_event, args.serial_port, args.serial_baud),
+                name="usb-display-writer",
+                daemon=True,
+            )
+        )
+    for thread in threads:
+        thread.start()
+
+    print(
+        f"[desktop-bridge] listening on http://{args.listen_host}:{args.listen_port}",
+        file=sys.stderr,
+        flush=True,
+    )
+    try:
+        server.serve_forever(poll_interval=0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop_event.set()
+        server.shutdown()
+        server.server_close()
+        temperature.stop()
+        for thread in threads:
+            thread.join(timeout=2)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

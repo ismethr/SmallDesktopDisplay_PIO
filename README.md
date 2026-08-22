@@ -20,6 +20,7 @@
 - 可选 DHT11 室内温湿度显示；读数无效时保留上一帧而不绘制 `NaN`。
 - WiFiManager Web 配网，连接失败时开启限时配置门户；也可编译为 SmartConfig 模式。
 - 轻量局域网管理页，可在浏览器中修改 Codex 桥接地址、城市、亮度、刷新间隔和方向，并可立即刷新或重启设备。
+- 可选的第二块 USB Mac 状态屏，显示 CPU、内存、CPU 温度和默认网卡实时速度；统一 macOS 后台同时服务天气时钟的 Codex 用量与 USB 状态屏，两路故障互不影响。
 - 配置持久化：亮度、旋转、天气间隔、城市、Codex 桥接地址、DHT 开关和 Wi-Fi 凭据。
 - 串口配置与诊断：状态、空闲堆、最大连续堆块、碎片率、亮度、城市、Codex 桥接地址、方向、刷新周期、立即刷新与重启。
 - 默认保持 Wi-Fi 在线以提供局域网管理页；关闭该功能时恢复按刷新周期唤醒射频。重连、HTTP 和 NTP 均有明确超时。
@@ -70,6 +71,7 @@ http://smalldisplay-<芯片ID>.local/
 - 时间：`ntp.aliyun.com`、`ntp.tencent.com`、`pool.ntp.org`。固件验证响应来源、NTP 模式、stratum、时间范围和请求 cookie，不再接受明文 HTTP 时间降级。
 - 天气与城市：weather.com.cn 的 HTTP 接口。该接口不提供 TLS，因此天气数据没有传输完整性保证；失败或格式变化时保留已有画面。
 - Codex 用量：[`tools/codex_usage_bridge`](tools/codex_usage_bridge/README.md) 在 Mac 上读取本机 Codex 登录凭据，通过 ChatGPT 客户端使用的用量接口获取数据。ESP8266 只访问局域网内的百分比 JSON，永远不会收到 OAuth 令牌。该上游不是公开稳定 API，格式变化时可能需要更新桥接程序。
+- Mac 状态：[`tools/desktop_display_bridge`](tools/desktop_display_bridge/README.md) 使用 psutil 读取 CPU、内存与默认网卡计数，并使用 macmon 的持续数据流读取 Apple Silicon CPU 温度；第二块屏幕仅接收经过 CRC16 校验的 USB 串口帧，不使用 Wi-Fi。
 - Codex 桥接默认没有访问认证，只应运行在可信局域网；不要将 `8766` 端口映射到公网。桥接只把令牌发送至经 TLS 验证的 `chatgpt.com`，对设备隐藏本机路径与详细错误。
 - 局域网管理页只接受设备当前子网内的连接，并使用页面令牌防止跨站表单提交；它没有账号认证，不应暴露到公网或不受信任的局域网。
 - Wi-Fi 密码存储于 ESP8266 EEPROM 模拟区，未做静态加密；具备芯片物理访问能力的人员仍可能读取。
@@ -149,6 +151,7 @@ pio device monitor -b 115200
 ```powershell
 python -B -m unittest discover -s tools/font_translate/tests -v
 python -B tools/codex_usage_bridge/test_codex_usage_bridge.py -v
+python -B tools/desktop_display_bridge/test_desktop_display_bridge.py -v
 python -B -m unittest discover -s test/host -v
 ```
 
@@ -156,6 +159,7 @@ python -B -m unittest discover -s test/host -v
 
 ```powershell
 pio test -e native_test
+pio test -d mac_status_display -e native_test
 ```
 
 Windows 模拟器还提供 MSVC `/W4 /WX` 构建、真实 JPEG 解码、固定场景 RGB565 哈希和便携包自检：
@@ -202,6 +206,8 @@ test/test_display_logic/     Unity 边界测试
 test/host/                    固件证书与静态资源完整性测试
 tools/font_translate/        字体转换工具及 Python 单元测试
 tools/codex_usage_bridge/    将本机 Codex 周用量安全提供给局域网内的时钟
+tools/desktop_display_bridge/统一运行 Codex HTTP 接口与 USB Mac 状态传输
+mac_status_display/          第二块 ESP8266 的 USB Mac 状态屏固件
 tools/*_simulator.ps1        Windows 模拟器构建、测试与便携打包脚本
 ```
 

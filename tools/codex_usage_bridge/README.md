@@ -1,5 +1,7 @@
 # Codex 用量桥接
 
+> 只使用一块天气时钟时仍可单独运行这个程序。若还要驱动 USB Mac 状态屏，推荐改用 [`../desktop_display_bridge`](../desktop_display_bridge/README.md)；它复用本模块并保持 `/v1/codex-usage` 接口不变。
+
 这个小程序只做一件事：读取本机 Codex 已有的登录凭据，获取订阅额度窗口，向同一局域网内的桌面时钟提供不含令牌的 JSON。
 
 ```bash

@@ -1,0 +1,72 @@
+#include <unity.h>
+
+#include <stdio.h>
+#include <string.h>
+
+#include "status_protocol.h"
+
+namespace {
+
+void buildFrame(const char *payload, char *output, size_t outputSize) {
+  const uint16_t crc = macstatus::crc16Ccitt(
+      reinterpret_cast<const uint8_t *>(payload), strlen(payload));
+  snprintf(output, outputSize, "$%s*%04X", payload, crc);
+}
+
+void test_crc_standard_vector() {
+  const char *value = "123456789";
+  TEST_ASSERT_EQUAL_HEX16(
+      0x29B1,
+      macstatus::crc16Ccitt(reinterpret_cast<const uint8_t *>(value), strlen(value)));
+}
+
+void test_valid_frame() {
+  char line[macstatus::kMaximumFrameLength + 1];
+  buildFrame("MSD1,42,123,876,557,1048576,4096", line, sizeof(line));
+  macstatus::StatusFrame frame = {};
+  TEST_ASSERT_TRUE(macstatus::parseStatusFrame(line, frame));
+  TEST_ASSERT_EQUAL_UINT16(42, frame.sequence);
+  TEST_ASSERT_EQUAL_UINT16(123, frame.cpuTenths);
+  TEST_ASSERT_EQUAL_UINT16(876, frame.memoryTenths);
+  TEST_ASSERT_EQUAL_INT16(557, frame.temperatureTenths);
+  TEST_ASSERT_EQUAL_UINT32(1048576, frame.downloadBytesPerSecond);
+  TEST_ASSERT_EQUAL_UINT32(4096, frame.uploadBytesPerSecond);
+}
+
+void test_missing_temperature() {
+  char line[macstatus::kMaximumFrameLength + 1];
+  buildFrame("MSD1,0,0,1000,-32768,0,0", line, sizeof(line));
+  macstatus::StatusFrame frame = {};
+  TEST_ASSERT_TRUE(macstatus::parseStatusFrame(line, frame));
+  TEST_ASSERT_EQUAL_INT16(macstatus::kMissingTemperature, frame.temperatureTenths);
+}
+
+void test_bad_crc_is_rejected_without_mutating_output() {
+  char line[] = "$MSD1,42,123,876,557,1,2*0000";
+  macstatus::StatusFrame frame = {7, 8, 9, 10, 11, 12};
+  TEST_ASSERT_FALSE(macstatus::parseStatusFrame(line, frame));
+  TEST_ASSERT_EQUAL_UINT16(7, frame.sequence);
+  TEST_ASSERT_EQUAL_UINT32(11, frame.downloadBytesPerSecond);
+}
+
+void test_out_of_range_and_extra_fields_are_rejected() {
+  char cpuLine[macstatus::kMaximumFrameLength + 1];
+  char extraLine[macstatus::kMaximumFrameLength + 1];
+  buildFrame("MSD1,1,1001,20,500,1,2", cpuLine, sizeof(cpuLine));
+  buildFrame("MSD1,1,10,20,500,1,2,3", extraLine, sizeof(extraLine));
+  macstatus::StatusFrame frame = {};
+  TEST_ASSERT_FALSE(macstatus::parseStatusFrame(cpuLine, frame));
+  TEST_ASSERT_FALSE(macstatus::parseStatusFrame(extraLine, frame));
+}
+
+}  // namespace
+
+int main(int, char **) {
+  UNITY_BEGIN();
+  RUN_TEST(test_crc_standard_vector);
+  RUN_TEST(test_valid_frame);
+  RUN_TEST(test_missing_temperature);
+  RUN_TEST(test_bad_crc_is_rejected_without_mutating_output);
+  RUN_TEST(test_out_of_range_and_extra_fields_are_rejected);
+  return UNITY_END();
+}
