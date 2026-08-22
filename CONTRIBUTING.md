@@ -18,3 +18,17 @@ Before opening a pull request:
 
 Security reports belong in GitHub's private vulnerability reporting flow, not
 in public issues or pull requests; see `SECURITY.md`.
+
+## AI-assisted changes
+
+Human contributors remain responsible for the code they submit, including its
+review, testing, licensing and security. When OpenAI Codex materially assists
+with a commit, disclose that assistance with a Git trailer after a blank line:
+
+```text
+Assisted-by: OpenAI Codex
+```
+
+Do not use `Co-authored-by` for an AI tool unless its provider publishes an
+official GitHub account-linked identity and explicitly authorizes that use.
+Do not invent an email address or reuse another product's bot identity.
