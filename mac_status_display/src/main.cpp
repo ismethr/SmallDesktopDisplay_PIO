@@ -7,10 +7,12 @@ namespace {
 
 constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kOfflineAfterMs = 4000;
-constexpr uint16_t kBackground = 0x0861;
-constexpr uint16_t kPanel = 0x10C3;
-constexpr uint16_t kPanelBorder = 0x2965;
-constexpr uint16_t kMuted = 0x9CD3;
+constexpr uint8_t kDefaultDayBrightness = 50;
+constexpr uint8_t kDefaultOfflineBrightness = 5;
+constexpr uint16_t kBackground = TFT_BLACK;
+constexpr uint16_t kPanel = 0x1082;
+constexpr uint16_t kPanelBorder = 0x3186;
+constexpr uint16_t kMuted = 0xAD55;
 constexpr uint16_t kGreen = 0x4E69;
 constexpr uint16_t kYellow = 0xF5C0;
 constexpr uint16_t kRed = 0xF9E7;
@@ -23,6 +25,16 @@ size_t serialLength = 0;
 bool serialOverflow = false;
 bool offlineDrawn = false;
 uint32_t lastValidFrameAt = 0;
+uint8_t currentBrightness = 255;
+uint8_t offlineBrightness = kDefaultOfflineBrightness;
+
+void applyBrightness(uint8_t percent) {
+  if (percent == currentBrightness) return;
+  const uint16_t pwm = static_cast<uint16_t>(
+      1023U - (static_cast<uint32_t>(percent) * 1023U) / 100U);
+  analogWrite(TFT_BL, pwm);
+  currentBrightness = percent;
+}
 
 uint16_t loadColor(uint16_t tenths) {
   if (tenths >= 850) return kRed;
@@ -148,6 +160,8 @@ void drawNetwork(uint32_t download, uint32_t upload) {
 }
 
 void drawFrame(const macstatus::StatusFrame &frame) {
+  offlineBrightness = frame.offlineBrightnessPercent;
+  applyBrightness(frame.brightnessPercent);
   drawPercent(8, frame.cpuTenths);
   drawPercent(124, frame.memoryTenths);
   drawTemperature(frame.temperatureTenths);
@@ -159,7 +173,9 @@ void drawFrame(const macstatus::StatusFrame &frame) {
 void processLine() {
   if (serialOverflow || serialLength == 0) return;
   serialBuffer[serialLength] = '\0';
-  macstatus::StatusFrame frame = {0, 0, 0, macstatus::kMissingTemperature, 0, 0};
+  macstatus::StatusFrame frame = {
+      0, 0, 0, macstatus::kMissingTemperature, 0, 0,
+      kDefaultDayBrightness, kDefaultOfflineBrightness};
   if (!macstatus::parseStatusFrame(serialBuffer, frame)) return;
   lastValidFrameAt = millis();
   drawFrame(frame);
@@ -188,20 +204,21 @@ void setup() {
   Serial.begin(kSerialBaud);
   pinMode(TFT_BL, OUTPUT);
   analogWriteRange(1023);
-  analogWrite(TFT_BL, 512);
+  applyBrightness(kDefaultDayBrightness);
 
   display.begin();
   display.invertDisplay(1);
   display.setRotation(0);
   drawStaticInterface();
   lastValidFrameAt = millis();
-  Serial.println("MSD1 READY");
+  Serial.println("MSD2 READY");
 }
 
 void loop() {
   readSerialFrames();
   if (!offlineDrawn && millis() - lastValidFrameAt > kOfflineAfterMs) {
     drawConnectionStatus("USB LOST", kRed);
+    applyBrightness(offlineBrightness);
     offlineDrawn = true;
   }
   delay(2);

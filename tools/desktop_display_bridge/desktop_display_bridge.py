@@ -43,7 +43,12 @@ DEFAULT_SAMPLE_SECONDS = 1.0
 DEFAULT_MACMON_PATH = Path("/opt/homebrew/bin/macmon")
 DEFAULT_RECONNECT_SECONDS = 2.0
 DEFAULT_TEMPERATURE_MAX_AGE = 10.0
-FRAME_PREFIX = "MSD1"
+DEFAULT_NIGHT_START_HOUR = 0
+DEFAULT_NIGHT_END_HOUR = 7
+DEFAULT_DAY_BRIGHTNESS = 50
+DEFAULT_NIGHT_BRIGHTNESS = 10
+DEFAULT_OFFLINE_BRIGHTNESS = 5
+FRAME_PREFIX = "MSD2"
 MISSING_TEMPERATURE = -32768
 ROUTE_COMMAND = ("/sbin/route", "-n", "get", "default")
 
@@ -63,6 +68,9 @@ class MacStatusSnapshot:
     cpu_temperature_c: float | None = None
     download_bps: int = 0
     upload_bps: int = 0
+    display_brightness_percent: int = DEFAULT_DAY_BRIGHTNESS
+    offline_brightness_percent: int = DEFAULT_OFFLINE_BRIGHTNESS
+    night_mode: bool = False
     interface: str | None = None
     sampled_at: int | None = None
     error: str | None = "waiting for first sample"
@@ -157,6 +165,8 @@ def encode_status_frame(snapshot: MacStatusSnapshot) -> bytes:
             str(temperature),
             str(max(0, min(0xFFFFFFFF, int(snapshot.download_bps)))),
             str(max(0, min(0xFFFFFFFF, int(snapshot.upload_bps)))),
+            str(max(0, min(100, int(snapshot.display_brightness_percent)))),
+            str(max(0, min(100, int(snapshot.offline_brightness_percent)))),
         )
     )
     checksum = crc16_ccitt(payload.encode("ascii"))
@@ -192,6 +202,15 @@ def choose_network_interface(counters: Mapping[str, NetCounters], override: str 
         return "en0"
     candidates = ((name, item) for name, item in counters.items() if name != "lo0")
     return max(candidates, key=lambda pair: pair[1].bytes_recv + pair[1].bytes_sent, default=(None, None))[0]
+
+
+def is_night_hour(hour: int, start_hour: int, end_hour: int) -> bool:
+    """Return whether an hour is inside a possibly midnight-crossing window."""
+    if start_hour == end_hour:
+        return False
+    if start_hour < end_hour:
+        return start_hour <= hour < end_hour
+    return hour >= start_hour or hour < end_hour
 
 
 def _parse_macmon_temperature(line: str) -> float | None:
@@ -287,6 +306,11 @@ def sample_mac_status_loop(
     stop_event: threading.Event,
     interval: float,
     network_override: str | None,
+    night_start_hour: int,
+    night_end_hour: int,
+    day_brightness: int,
+    night_brightness: int,
+    offline_brightness: int,
 ) -> None:
     assert psutil is not None
     psutil.cpu_percent(interval=None)
@@ -316,6 +340,11 @@ def sample_mac_status_loop(
         previous = current
         previous_at = now_mono
 
+        night_mode = is_night_hour(
+            time.localtime().tm_hour,
+            night_start_hour,
+            night_end_hour,
+        )
         snapshot = MacStatusSnapshot(
             valid=True,
             sequence=sequence,
@@ -324,6 +353,9 @@ def sample_mac_status_loop(
             cpu_temperature_c=temperature.get(),
             download_bps=download_bps,
             upload_bps=upload_bps,
+            display_brightness_percent=night_brightness if night_mode else day_brightness,
+            offline_brightness_percent=offline_brightness,
+            night_mode=night_mode,
             interface=interface,
             sampled_at=int(time.time()),
             error=None if interface else "network interface unavailable",
@@ -497,6 +529,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--serial-baud", type=int, default=DEFAULT_SERIAL_BAUD)
     parser.add_argument("--sample-seconds", type=float, default=DEFAULT_SAMPLE_SECONDS)
+    parser.add_argument(
+        "--night-start-hour",
+        type=int,
+        default=int(os.getenv("DESKTOP_BRIDGE_NIGHT_START_HOUR", str(DEFAULT_NIGHT_START_HOUR))),
+    )
+    parser.add_argument(
+        "--night-end-hour",
+        type=int,
+        default=int(os.getenv("DESKTOP_BRIDGE_NIGHT_END_HOUR", str(DEFAULT_NIGHT_END_HOUR))),
+    )
+    parser.add_argument(
+        "--day-brightness",
+        type=int,
+        default=int(os.getenv("DESKTOP_BRIDGE_DAY_BRIGHTNESS", str(DEFAULT_DAY_BRIGHTNESS))),
+    )
+    parser.add_argument(
+        "--night-brightness",
+        type=int,
+        default=int(os.getenv("DESKTOP_BRIDGE_NIGHT_BRIGHTNESS", str(DEFAULT_NIGHT_BRIGHTNESS))),
+    )
+    parser.add_argument(
+        "--offline-brightness",
+        type=int,
+        default=int(os.getenv("DESKTOP_BRIDGE_OFFLINE_BRIGHTNESS", str(DEFAULT_OFFLINE_BRIGHTNESS))),
+    )
     parser.add_argument("--no-usb", action="store_true", help="collect metrics without opening a serial port")
     return parser
 
@@ -510,6 +567,11 @@ def _validate_args(args: argparse.Namespace) -> str | None:
         return "sample interval must be between 0.25 and 10 seconds"
     if not 1200 <= args.serial_baud <= 2_000_000:
         return "serial baud must be between 1200 and 2000000"
+    if not 0 <= args.night_start_hour <= 23 or not 0 <= args.night_end_hour <= 23:
+        return "night start and end hours must be between 0 and 23"
+    for name in ("day_brightness", "night_brightness", "offline_brightness"):
+        if not 0 <= getattr(args, name) <= 100:
+            return f"{name.replace('_', ' ')} must be between 0 and 100"
     return None
 
 
@@ -564,6 +626,11 @@ def main(argv: list[str] | None = None) -> int:
                 stop_event,
                 args.sample_seconds,
                 args.network_interface,
+                args.night_start_hour,
+                args.night_end_hour,
+                args.day_brightness,
+                args.night_brightness,
+                args.offline_brightness,
             ),
             name="mac-status-sampler",
             daemon=True,

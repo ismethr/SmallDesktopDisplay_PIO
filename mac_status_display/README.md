@@ -7,6 +7,7 @@
 - CPU 温度
 - 当前默认上网接口的下载、上传速度
 - USB 在线/断线状态
+- 黑色背景与自动节能亮度：默认 00:00–07:00 为 10%，白天 50%，数据断开后 5%
 
 接线和第一块天气时钟相同：SCK GPIO14、MOSI GPIO13、CS GPIO15、DC GPIO0、RST GPIO2、背光 GPIO5。串口固定为 115200 baud。
 
@@ -25,6 +26,6 @@ pio run -d mac_status_display -e esp12e -t upload --upload-port /dev/cu.usbseria
 pio test -d mac_status_display -e native_test
 ```
 
-屏幕不保存账号、Wi-Fi 密码或 Codex 数据。串口帧经过 CRC16、长度、版本、字段数和范围检查；拔掉 USB 后保留最后一组数值并显示 `USB LOST`，重新插入后由统一后台自动恢复。
+屏幕不保存账号、Wi-Fi 密码或 Codex 数据。串口帧经过 CRC16、长度、版本、字段数和范围检查；数据中断后保留最后一组数值、显示 `USB LOST` 并降低背光，重新连接后由统一后台按当前时段自动恢复。若同一根 USB 线也负责供电，物理拔线后设备会直接断电；离线亮度用于 Mac 睡眠、后台停止或串口数据中断但屏幕仍有供电的情况。
 
 刷机前请完整备份设备原来的 4 MB Flash，并记录备份的 SHA-256，以便需要时恢复。

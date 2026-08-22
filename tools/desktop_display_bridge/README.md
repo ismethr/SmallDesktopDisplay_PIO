@@ -35,6 +35,9 @@ DESKTOP_BRIDGE_SERIAL_PORT=/dev/cu.usbserial-2140 \
 - `DESKTOP_BRIDGE_SERIAL_PORT`：第二块屏幕的固定串口路径。
 - `DESKTOP_BRIDGE_NETWORK_INTERFACE`：可选网卡名，例如 `en0`；留空时跟随默认路由。
 - `DESKTOP_BRIDGE_MACMON`：`macmon` 可执行文件路径，Apple Silicon Homebrew 默认是 `/opt/homebrew/bin/macmon`。
+- `DESKTOP_BRIDGE_NIGHT_START_HOUR`、`DESKTOP_BRIDGE_NIGHT_END_HOUR`：夜间节能开始和结束小时，默认 `0` 和 `7`；两者相同表示关闭定时节能。
+- `DESKTOP_BRIDGE_DAY_BRIGHTNESS`、`DESKTOP_BRIDGE_NIGHT_BRIGHTNESS`：白天和夜间亮度百分比，默认 `50` 和 `10`。
+- `DESKTOP_BRIDGE_OFFLINE_BRIGHTNESS`：连续 4 秒收不到数据后的亮度，默认 `5`。
 
 诊断接口：
 
@@ -49,9 +52,9 @@ DESKTOP_BRIDGE_SERIAL_PORT=/dev/cu.usbserial-2140 \
 串口为 115200 baud，每行一帧：
 
 ```text
-$MSD1,<序号>,<CPU×10>,<内存×10>,<温度×10>,<下载B/s>,<上传B/s>*<CRC16>
+$MSD2,<序号>,<CPU×10>,<内存×10>,<温度×10>,<下载B/s>,<上传B/s>,<当前亮度>,<离线亮度>*<CRC16>
 ```
 
-CRC 使用 CRC-16/CCITT-FALSE，校验范围是 `$` 之后、`*` 之前的 ASCII 内容。缺少温度时发送 `-32768`。ESP8266 只接受版本、字段数、数值范围和 CRC 均合法的完整帧，连续 4 秒没有合法帧就显示 `USB LOST`。
+CRC 使用 CRC-16/CCITT-FALSE，校验范围是 `$` 之后、`*` 之前的 ASCII 内容。缺少温度时发送 `-32768`。ESP8266 只接受版本、字段数、数值范围和 CRC 均合法的完整帧，连续 4 秒没有合法帧就显示 `USB LOST` 并使用离线亮度。重新收到合法帧后会按 Mac 当前时段自动恢复亮度。
 
 第二块屏幕固件位于 [`mac_status_display`](../../mac_status_display/README.md)。

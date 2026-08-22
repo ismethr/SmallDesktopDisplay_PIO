@@ -27,10 +27,12 @@ class DesktopDisplayBridgeTests(unittest.TestCase):
             cpu_temperature_c=52.25,
             download_bps=123456,
             upload_bps=-1,
+            display_brightness_percent=10,
+            offline_brightness_percent=5,
         )
         frame = bridge.encode_status_frame(snapshot).decode("ascii")
         payload, checksum = frame[1:].strip().split("*")
-        self.assertEqual("MSD1,1,123,1000,522,123456,0", payload)
+        self.assertEqual("MSD2,1,123,1000,522,123456,0,10,5", payload)
         self.assertEqual(bridge.crc16_ccitt(payload.encode("ascii")), int(checksum, 16))
 
     def test_status_frame_uses_temperature_sentinel(self) -> None:
@@ -45,6 +47,17 @@ class DesktopDisplayBridgeTests(unittest.TestCase):
         output = "route to: default\ninterface: en0\nflags: <UP,GATEWAY>\n"
         self.assertEqual("en0", bridge.parse_default_route_interface(output))
         self.assertIsNone(bridge.parse_default_route_interface("interface missing"))
+
+    def test_night_window_crosses_midnight(self) -> None:
+        self.assertTrue(bridge.is_night_hour(0, 23, 7))
+        self.assertTrue(bridge.is_night_hour(23, 23, 7))
+        self.assertFalse(bridge.is_night_hour(12, 23, 7))
+        self.assertFalse(bridge.is_night_hour(0, 0, 0))
+
+    def test_default_midnight_window(self) -> None:
+        self.assertTrue(bridge.is_night_hour(0, 0, 7))
+        self.assertTrue(bridge.is_night_hour(6, 0, 7))
+        self.assertFalse(bridge.is_night_hour(7, 0, 7))
 
     def test_interface_override_and_fallback(self) -> None:
         counters = {"lo0": Counter(9999, 9999), "en0": Counter(100, 50)}
