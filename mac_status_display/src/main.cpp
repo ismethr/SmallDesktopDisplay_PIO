@@ -10,8 +10,7 @@ constexpr uint32_t kOfflineAfterMs = 4000;
 constexpr uint8_t kDefaultDayBrightness = 50;
 constexpr uint8_t kDefaultOfflineBrightness = 5;
 constexpr uint16_t kBackground = TFT_BLACK;
-constexpr uint16_t kPanel = 0x1082;
-constexpr uint16_t kPanelBorder = 0x3186;
+constexpr uint16_t kPanelBorder = 0x5ACB;
 constexpr uint16_t kMuted = 0xAD55;
 constexpr uint16_t kGreen = 0x4E69;
 constexpr uint16_t kYellow = 0xF5C0;
@@ -27,6 +26,36 @@ bool offlineDrawn = false;
 uint32_t lastValidFrameAt = 0;
 uint8_t currentBrightness = 255;
 uint8_t offlineBrightness = kDefaultOfflineBrightness;
+
+void drawDashedHorizontalLine(int16_t x, int16_t y, int16_t length,
+                              uint16_t color) {
+  constexpr int16_t kDashLength = 5;
+  constexpr int16_t kDashGap = 4;
+  for (int16_t offset = 0; offset < length; offset += kDashLength + kDashGap) {
+    const int16_t remaining = length - offset;
+    const int16_t segment = remaining < kDashLength ? remaining : kDashLength;
+    display.drawFastHLine(x + offset, y, segment, color);
+  }
+}
+
+void drawDashedVerticalLine(int16_t x, int16_t y, int16_t length,
+                            uint16_t color) {
+  constexpr int16_t kDashLength = 5;
+  constexpr int16_t kDashGap = 4;
+  for (int16_t offset = 0; offset < length; offset += kDashLength + kDashGap) {
+    const int16_t remaining = length - offset;
+    const int16_t segment = remaining < kDashLength ? remaining : kDashLength;
+    display.drawFastVLine(x, y + offset, segment, color);
+  }
+}
+
+void drawDashedBorder(int16_t x, int16_t y, int16_t width, int16_t height,
+                      uint16_t color) {
+  drawDashedHorizontalLine(x, y, width, color);
+  drawDashedHorizontalLine(x, y + height - 1, width, color);
+  drawDashedVerticalLine(x, y, height, color);
+  drawDashedVerticalLine(x + width - 1, y, height, color);
+}
 
 void applyBrightness(uint8_t percent) {
   if (percent == currentBrightness) return;
@@ -61,33 +90,29 @@ void drawStaticInterface() {
   display.drawString("MAC STATUS", 10, 18);
   display.drawFastHLine(8, 35, 224, kPanelBorder);
 
-  display.fillRoundRect(8, 44, 108, 82, 8, kPanel);
-  display.drawRoundRect(8, 44, 108, 82, 8, kPanelBorder);
-  display.fillRoundRect(124, 44, 108, 82, 8, kPanel);
-  display.drawRoundRect(124, 44, 108, 82, 8, kPanelBorder);
+  drawDashedBorder(8, 44, 108, 82, kPanelBorder);
+  drawDashedBorder(124, 44, 108, 82, kPanelBorder);
 
   display.setTextDatum(TL_DATUM);
   display.setTextFont(2);
-  display.setTextColor(kMuted, kPanel);
+  display.setTextColor(kMuted, kBackground);
   display.drawString("CPU", 18, 51);
   display.drawString("MEMORY", 134, 51);
 
-  display.fillRoundRect(8, 134, 224, 43, 8, kPanel);
-  display.drawRoundRect(8, 134, 224, 43, 8, kPanelBorder);
+  drawDashedBorder(8, 134, 224, 43, kPanelBorder);
   display.fillCircle(25, 156, 7, kRed);
   display.fillRoundRect(22, 141, 6, 20, 3, kRed);
   display.setTextDatum(ML_DATUM);
-  display.setTextColor(kMuted, kPanel);
+  display.setTextColor(kMuted, kBackground);
   display.drawString("CPU TEMP", 40, 156);
 
-  display.fillRoundRect(8, 185, 224, 47, 8, kPanel);
-  display.drawRoundRect(8, 185, 224, 47, 8, kPanelBorder);
+  drawDashedBorder(8, 185, 224, 47, kPanelBorder);
   display.setTextFont(1);
-  display.setTextColor(kBlue, kPanel);
+  display.setTextColor(kBlue, kBackground);
   display.drawString("DOWN", 20, 195);
-  display.setTextColor(kPurple, kPanel);
+  display.setTextColor(kPurple, kBackground);
   display.drawString("UP", 137, 195);
-  display.drawFastVLine(120, 191, 34, kPanelBorder);
+  drawDashedVerticalLine(120, 191, 34, kPanelBorder);
   drawConnectionStatus("WAITING", kYellow);
 }
 
@@ -100,11 +125,11 @@ void drawProgressBar(int16_t x, int16_t y, int16_t width, uint16_t tenths, uint1
 void drawPercent(int16_t x, uint16_t tenths) {
   char value[8];
   snprintf(value, sizeof(value), "%u%%", static_cast<unsigned>((tenths + 5U) / 10U));
-  display.fillRect(x + 4, 69, 100, 37, kPanel);
+  display.fillRect(x + 4, 69, 100, 37, kBackground);
   display.setTextDatum(MC_DATUM);
   display.setTextFont(2);
   display.setTextSize(2);
-  display.setTextColor(TFT_WHITE, kPanel);
+  display.setTextColor(TFT_WHITE, kBackground);
   display.drawString(value, x + 54, 87);
   display.setTextSize(1);
   drawProgressBar(x + 11, 112, 86, tenths, loadColor(tenths));
@@ -136,11 +161,11 @@ void drawTemperature(int16_t tenths) {
              static_cast<unsigned>(magnitude / 10U),
              static_cast<unsigned>(magnitude % 10U));
   }
-  display.fillRect(132, 141, 92, 29, kPanel);
+  display.fillRect(132, 141, 92, 29, kBackground);
   display.setTextDatum(MR_DATUM);
   display.setTextFont(2);
   display.setTextSize(1);
-  display.setTextColor(color, kPanel);
+  display.setTextColor(color, kBackground);
   display.drawString(value, 218, 156);
 }
 
@@ -149,12 +174,12 @@ void drawNetwork(uint32_t download, uint32_t upload) {
   char upText[16];
   formatRate(download, downText, sizeof(downText));
   formatRate(upload, upText, sizeof(upText));
-  display.fillRect(14, 204, 99, 22, kPanel);
-  display.fillRect(127, 204, 99, 22, kPanel);
+  display.fillRect(14, 204, 99, 22, kBackground);
+  display.fillRect(127, 204, 99, 22, kBackground);
   display.setTextDatum(MC_DATUM);
   display.setTextFont(2);
   display.setTextSize(1);
-  display.setTextColor(TFT_WHITE, kPanel);
+  display.setTextColor(TFT_WHITE, kBackground);
   display.drawString(downText, 64, 215);
   display.drawString(upText, 177, 215);
 }
