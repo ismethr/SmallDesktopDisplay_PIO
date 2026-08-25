@@ -6,15 +6,13 @@
   "city": "Boundary",
   "temperature_text": "-80",
   "temperature_celsius": -80,
-  "codex_valid": 1,
-  "codex_stale": 1,
-  "codex_remaining_percent": 0,
-  "codex_reset_minutes": 0,
+  "humidity_text": "100%",
+  "relative_humidity": 100,
   "aqi": 301,
   "weather_code": 31,
   "brightness": 100,
   "rotation": 3,
   "animation": "astronaut",
   "animation_frame": 9,
-  "expected_fnv1a64": "0283c7c8e1dce3a4"
+  "expected_fnv1a64": "3725670461bf784a"
 }

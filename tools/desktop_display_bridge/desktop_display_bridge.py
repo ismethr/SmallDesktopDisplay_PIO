@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the Codex usage endpoint and USB Mac monitor from one process."""
+"""Run the Codex usage endpoint and cross-platform USB system monitor."""
 
 from __future__ import annotations
 
@@ -8,7 +8,9 @@ import glob
 import json
 import math
 import os
+import platform
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -26,8 +28,10 @@ except ImportError:  # pragma: no cover - exercised by the startup guard
 
 try:
     import serial  # type: ignore[import-not-found]
+    from serial.tools import list_ports as serial_list_ports  # type: ignore[import-not-found]
 except ImportError:  # pragma: no cover - exercised by the startup guard
     serial = None  # type: ignore[assignment]
+    serial_list_ports = None  # type: ignore[assignment]
 
 
 TOOLS_DIR = Path(__file__).resolve().parents[1]
@@ -40,17 +44,26 @@ import codex_usage_bridge as codex  # noqa: E402
 
 DEFAULT_SERIAL_BAUD = 115200
 DEFAULT_SAMPLE_SECONDS = 1.0
-DEFAULT_MACMON_PATH = Path("/opt/homebrew/bin/macmon")
 DEFAULT_RECONNECT_SECONDS = 2.0
-DEFAULT_TEMPERATURE_MAX_AGE = 10.0
 DEFAULT_NIGHT_START_HOUR = 0
 DEFAULT_NIGHT_END_HOUR = 7
 DEFAULT_DAY_BRIGHTNESS = 50
 DEFAULT_NIGHT_BRIGHTNESS = 10
 DEFAULT_OFFLINE_BRIGHTNESS = 5
-FRAME_PREFIX = "MSD2"
-MISSING_TEMPERATURE = -32768
-ROUTE_COMMAND = ("/sbin/route", "-n", "get", "default")
+FRAME_PREFIX = "MSD3"
+MISSING_CODEX_USAGE = -1
+MACOS_ROUTE_COMMAND = ("/sbin/route", "-n", "get", "default")
+WINDOWS_ROUTE_COMMAND = (
+    "powershell.exe",
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    "Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' "
+    "-ErrorAction SilentlyContinue | Where-Object State -EQ Alive | "
+    "Sort-Object RouteMetric | Select-Object -First 1 -ExpandProperty InterfaceAlias",
+)
+HOST_PLATFORM = platform.system() or sys.platform
 
 
 class NetCounters(Protocol):
@@ -59,13 +72,14 @@ class NetCounters(Protocol):
 
 
 @dataclass(frozen=True)
-class MacStatusSnapshot:
-    schema: int = 1
+class DesktopStatusSnapshot:
+    schema: int = 2
     valid: bool = False
     sequence: int = 0
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
-    cpu_temperature_c: float | None = None
+    codex_remaining_percent: int | None = None
+    codex_usage_stale: bool = False
     download_bps: int = 0
     upload_bps: int = 0
     display_brightness_percent: int = DEFAULT_DAY_BRIGHTNESS
@@ -74,6 +88,7 @@ class MacStatusSnapshot:
     interface: str | None = None
     sampled_at: int | None = None
     error: str | None = "waiting for first sample"
+    host_platform: str = HOST_PLATFORM
 
     def as_public_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -81,16 +96,16 @@ class MacStatusSnapshot:
         return payload
 
 
-class MacStatusState:
+class DesktopStatusState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._snapshot = MacStatusSnapshot()
+        self._snapshot = DesktopStatusSnapshot()
 
-    def get(self) -> MacStatusSnapshot:
+    def get(self) -> DesktopStatusSnapshot:
         with self._lock:
             return self._snapshot
 
-    def set(self, snapshot: MacStatusSnapshot) -> None:
+    def set(self, snapshot: DesktopStatusSnapshot) -> None:
         with self._lock:
             self._snapshot = snapshot
 
@@ -99,7 +114,13 @@ class MacStatusState:
             if self._snapshot.valid:
                 self._snapshot = replace(self._snapshot, error=message)
             else:
-                self._snapshot = MacStatusSnapshot(error=message)
+                self._snapshot = DesktopStatusSnapshot(error=message)
+
+
+# Compatibility aliases for code importing the names used by the original
+# macOS-only bridge. The HTTP and serial compatibility surfaces are preserved too.
+MacStatusSnapshot = DesktopStatusSnapshot
+MacStatusState = DesktopStatusState
 
 
 @dataclass(frozen=True)
@@ -133,7 +154,7 @@ class UsbState:
 
 
 def crc16_ccitt(data: bytes) -> int:
-    """CRC-16/CCITT-FALSE used by both the Mac and ESP8266."""
+    """CRC-16/CCITT-FALSE used by the desktop bridge and ESP8266."""
     crc = 0xFFFF
     for byte in data:
         crc ^= byte << 8
@@ -148,13 +169,13 @@ def _bounded_tenths(value: float, low: int, high: int) -> int:
     return max(low, min(high, int(round(value * 10.0))))
 
 
-def encode_status_frame(snapshot: MacStatusSnapshot) -> bytes:
+def encode_status_frame(snapshot: DesktopStatusSnapshot) -> bytes:
     if not snapshot.valid:
-        raise ValueError("cannot encode an invalid Mac status snapshot")
-    temperature = (
-        MISSING_TEMPERATURE
-        if snapshot.cpu_temperature_c is None
-        else _bounded_tenths(snapshot.cpu_temperature_c, -400, 1500)
+        raise ValueError("cannot encode an invalid desktop status snapshot")
+    codex_remaining = (
+        MISSING_CODEX_USAGE
+        if snapshot.codex_remaining_percent is None
+        else _bounded_tenths(float(snapshot.codex_remaining_percent), 0, 1000)
     )
     payload = ",".join(
         (
@@ -162,7 +183,8 @@ def encode_status_frame(snapshot: MacStatusSnapshot) -> bytes:
             str(snapshot.sequence & 0xFFFF),
             str(_bounded_tenths(snapshot.cpu_percent, 0, 1000)),
             str(_bounded_tenths(snapshot.memory_percent, 0, 1000)),
-            str(temperature),
+            str(codex_remaining),
+            "1" if snapshot.codex_usage_stale else "0",
             str(max(0, min(0xFFFFFFFF, int(snapshot.download_bps)))),
             str(max(0, min(0xFFFFFFFF, int(snapshot.upload_bps)))),
             str(max(0, min(100, int(snapshot.display_brightness_percent)))),
@@ -178,18 +200,66 @@ def parse_default_route_interface(output: str) -> str | None:
     return match.group(1) if match else None
 
 
-def default_route_interface(timeout: float = 2.0) -> str | None:
+def parse_windows_default_route_interface(output: str) -> str | None:
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    return lines[0] if lines else None
+
+
+def default_route_interface_from_socket() -> str | None:
+    """Map the source address selected by the OS routing table back to an interface."""
+    if psutil is None:
+        return None
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        result = subprocess.run(
-            ROUTE_COMMAND,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        probe.settimeout(1.0)
+        probe.connect(("1.1.1.1", 9))
+        local_address = probe.getsockname()[0]
+        interfaces = psutil.net_if_addrs()
+    except (OSError, AttributeError):
+        return None
+    finally:
+        probe.close()
+    for name, addresses in interfaces.items():
+        if any(address.family == socket.AF_INET and address.address == local_address for address in addresses):
+            return name
+    return None
+
+
+def default_route_interface(
+    timeout: float = 2.0,
+    platform_name: str | None = None,
+) -> str | None:
+    platform_name = sys.platform if platform_name is None else platform_name
+    if platform_name == "darwin":
+        command = MACOS_ROUTE_COMMAND
+        parser = parse_default_route_interface
+    elif platform_name == "win32":
+        routed = default_route_interface_from_socket()
+        if routed is not None:
+            return routed
+        command = WINDOWS_ROUTE_COMMAND
+        parser = parse_windows_default_route_interface
+    else:
+        return None
+
+    run_options: dict[str, Any] = {
+        "check": False,
+        "capture_output": True,
+        "text": True,
+        "timeout": timeout,
+    }
+    if platform_name == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+        run_options["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        result = subprocess.run(command, **run_options)
     except (OSError, subprocess.SubprocessError):
         return None
-    return parse_default_route_interface(result.stdout) if result.returncode == 0 else None
+    return parser(result.stdout) if result.returncode == 0 else None
+
+
+def _is_loopback_interface(name: str) -> bool:
+    normalized = name.casefold()
+    return normalized in {"lo", "lo0"} or "loopback" in normalized
 
 
 def choose_network_interface(counters: Mapping[str, NetCounters], override: str | None) -> str | None:
@@ -200,7 +270,7 @@ def choose_network_interface(counters: Mapping[str, NetCounters], override: str 
         return routed
     if "en0" in counters:
         return "en0"
-    candidates = ((name, item) for name, item in counters.items() if name != "lo0")
+    candidates = ((name, item) for name, item in counters.items() if not _is_loopback_interface(name))
     return max(candidates, key=lambda pair: pair[1].bytes_recv + pair[1].bytes_sent, default=(None, None))[0]
 
 
@@ -213,96 +283,9 @@ def is_night_hour(hour: int, start_hour: int, end_hour: int) -> bool:
     return hour >= start_hour or hour < end_hour
 
 
-def _parse_macmon_temperature(line: str) -> float | None:
-    try:
-        payload = json.loads(line)
-    except json.JSONDecodeError:
-        return None
-    temp = payload.get("temp") if isinstance(payload, dict) else None
-    value = temp.get("cpu_temp_avg") if isinstance(temp, dict) else None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    result = float(value)
-    return result if math.isfinite(result) and -40.0 <= result <= 150.0 else None
-
-
-class MacmonTemperatureReader:
-    def __init__(
-        self,
-        executable: Path,
-        stop_event: threading.Event,
-        interval_ms: int = 1000,
-        max_age: float = DEFAULT_TEMPERATURE_MAX_AGE,
-    ) -> None:
-        self._executable = executable
-        self._stop_event = stop_event
-        self._interval_ms = interval_ms
-        self._max_age = max_age
-        self._lock = threading.Lock()
-        self._temperature: float | None = None
-        self._updated_monotonic = 0.0
-        self._process: subprocess.Popen[str] | None = None
-        self._thread = threading.Thread(target=self._run, name="macmon-temperature", daemon=True)
-
-    def start(self) -> None:
-        self._thread.start()
-
-    def get(self) -> float | None:
-        with self._lock:
-            if time.monotonic() - self._updated_monotonic > self._max_age:
-                return None
-            return self._temperature
-
-    def stop(self) -> None:
-        self._stop_event.set()
-        process = self._process
-        if process is not None and process.poll() is None:
-            process.terminate()
-        self._thread.join(timeout=3)
-        if process is not None and process.poll() is None:
-            process.kill()
-
-    def _run(self) -> None:
-        while not self._stop_event.is_set():
-            try:
-                process = subprocess.Popen(
-                    [str(self._executable), "-i", str(self._interval_ms), "pipe"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                    bufsize=1,
-                )
-            except OSError as exc:
-                print(f"[desktop-bridge] macmon unavailable: {exc}", file=sys.stderr, flush=True)
-                self._stop_event.wait(10)
-                continue
-
-            self._process = process
-            assert process.stdout is not None
-            for line in process.stdout:
-                if self._stop_event.is_set():
-                    break
-                temperature = _parse_macmon_temperature(line)
-                if temperature is not None:
-                    with self._lock:
-                        self._temperature = temperature
-                        self._updated_monotonic = time.monotonic()
-            if process.poll() is None:
-                process.terminate()
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=2)
-            self._process = None
-            if not self._stop_event.is_set():
-                print("[desktop-bridge] macmon stopped; retrying", file=sys.stderr, flush=True)
-                self._stop_event.wait(5)
-
-
-def sample_mac_status_loop(
-    state: MacStatusState,
-    temperature: MacmonTemperatureReader,
+def sample_desktop_status_loop(
+    state: DesktopStatusState,
+    usage_state: codex.UsageState,
     stop_event: threading.Event,
     interval: float,
     network_override: str | None,
@@ -345,12 +328,14 @@ def sample_mac_status_loop(
             night_start_hour,
             night_end_hour,
         )
-        snapshot = MacStatusSnapshot(
+        usage = usage_state.get()
+        snapshot = DesktopStatusSnapshot(
             valid=True,
             sequence=sequence,
             cpu_percent=max(0.0, min(100.0, float(psutil.cpu_percent(interval=None)))),
             memory_percent=max(0.0, min(100.0, float(psutil.virtual_memory().percent))),
-            cpu_temperature_c=temperature.get(),
+            codex_remaining_percent=usage.remaining_percent if usage.valid else None,
+            codex_usage_stale=usage.stale,
             download_bps=download_bps,
             upload_bps=upload_bps,
             display_brightness_percent=night_brightness if night_mode else day_brightness,
@@ -364,24 +349,78 @@ def sample_mac_status_loop(
         sequence = (sequence + 1) & 0xFFFF
 
 
-def discover_serial_port(explicit_port: str | None) -> tuple[str | None, str | None]:
-    if explicit_port:
-        return (explicit_port, None) if Path(explicit_port).exists() else (None, "configured USB port not found")
-    patterns = (
-        "/dev/cu.usbserial-*",
-        "/dev/cu.wchusbserial*",
-        "/dev/cu.SLAB_USBtoUART*",
+sample_mac_status_loop = sample_desktop_status_loop
+
+
+def _enumerated_serial_ports() -> list[tuple[str, bool]]:
+    if serial_list_ports is None:
+        return []
+    try:
+        records = serial_list_ports.comports()
+    except Exception:  # pragma: no cover - backend failures vary by OS and driver
+        return []
+
+    usb_markers = (
+        "usb",
+        "ch340",
+        "ch341",
+        "cp210",
+        "silicon labs",
+        "ftdi",
+        "wch",
+        "uart bridge",
     )
-    ports = sorted({path for pattern in patterns for path in glob.glob(pattern)})
-    if len(ports) == 1:
-        return ports[0], None
-    if not ports:
+    result: list[tuple[str, bool]] = []
+    for record in records:
+        device = str(getattr(record, "device", "")).strip()
+        if not device:
+            continue
+        metadata = " ".join(
+            str(getattr(record, field, "") or "")
+            for field in ("description", "manufacturer", "product", "hwid")
+        ).casefold()
+        is_usb = getattr(record, "vid", None) is not None or any(marker in metadata for marker in usb_markers)
+        result.append((device, is_usb))
+    return result
+
+
+def discover_serial_port(
+    explicit_port: str | None,
+    platform_name: str | None = None,
+) -> tuple[str | None, str | None]:
+    platform_name = sys.platform if platform_name is None else platform_name
+    enumerated = _enumerated_serial_ports()
+    if explicit_port:
+        for device, _ in enumerated:
+            if device.casefold() == explicit_port.casefold():
+                return device, None
+        if Path(explicit_port).exists() or (
+            platform_name == "win32" and re.fullmatch(r"(?i)COM[1-9]\d*", explicit_port)
+        ):
+            return explicit_port, None
+        return None, "configured USB port not found"
+
+    ports = {device for device, is_usb in enumerated if is_usb}
+    patterns: tuple[str, ...] = ()
+    if platform_name == "darwin":
+        patterns = (
+            "/dev/cu.usbserial-*",
+            "/dev/cu.wchusbserial*",
+            "/dev/cu.SLAB_USBtoUART*",
+        )
+    elif platform_name.startswith("linux"):
+        patterns = ("/dev/ttyUSB*", "/dev/ttyACM*")
+    ports.update(path for pattern in patterns for path in glob.glob(pattern))
+    sorted_ports = sorted(ports, key=str.casefold)
+    if len(sorted_ports) == 1:
+        return sorted_ports[0], None
+    if not sorted_ports:
         return None, "USB display not connected"
     return None, "multiple USB serial devices; configure DESKTOP_BRIDGE_SERIAL_PORT"
 
 
 def serial_writer_loop(
-    status_state: MacStatusState,
+    status_state: DesktopStatusState,
     usb_state: UsbState,
     stop_event: threading.Event,
     explicit_port: str | None,
@@ -456,7 +495,7 @@ def serial_writer_loop(
 
 def make_handler(
     usage_state: codex.UsageState,
-    status_state: MacStatusState,
+    status_state: DesktopStatusState,
     usb_state: UsbState,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
@@ -466,7 +505,7 @@ def make_handler(
             path = self.path.split("?", 1)[0]
             if path == "/v1/codex-usage":
                 self._send_json(usage_state.get().as_public_dict(), HTTPStatus.OK)
-            elif path == "/v1/mac-status":
+            elif path in {"/v1/desktop-status", "/v1/mac-status"}:
                 self._send_json(status_state.get().as_public_dict(), HTTPStatus.OK)
             elif path == "/health":
                 usage = usage_state.get()
@@ -477,8 +516,10 @@ def make_handler(
                         "ok": True,
                         "usage_ready": usage.valid,
                         "usage_stale": usage.stale,
+                        "desktop_status_ready": status.valid,
                         "mac_status_ready": status.valid,
-                        "temperature_ready": status.cpu_temperature_c is not None,
+                        "codex_usage_on_usb_ready": status.codex_remaining_percent is not None,
+                        "host_platform": status.host_platform,
                         "usb": usb.as_public_dict(),
                     },
                     HTTPStatus.OK,
@@ -521,11 +562,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--network-interface",
         default=os.getenv("DESKTOP_BRIDGE_NETWORK_INTERFACE") or None,
-    )
-    parser.add_argument(
-        "--macmon-path",
-        type=Path,
-        default=Path(os.getenv("DESKTOP_BRIDGE_MACMON", str(DEFAULT_MACMON_PATH))),
     )
     parser.add_argument("--serial-baud", type=int, default=DEFAULT_SERIAL_BAUD)
     parser.add_argument("--sample-seconds", type=float, default=DEFAULT_SAMPLE_SECONDS)
@@ -590,19 +626,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     usage_state = codex.UsageState()
-    status_state = MacStatusState()
+    status_state = DesktopStatusState()
     usb_state = UsbState()
     stop_event = threading.Event()
     server = codex.BridgeHTTPServer(
         (args.listen_host, args.listen_port),
         make_handler(usage_state, status_state, usb_state),
     )
-    temperature = MacmonTemperatureReader(
-        args.macmon_path,
-        stop_event,
-        interval_ms=max(250, int(args.sample_seconds * 1000)),
-    )
-    temperature.start()
 
     threads = [
         threading.Thread(
@@ -619,10 +649,10 @@ def main(argv: list[str] | None = None) -> int:
             daemon=True,
         ),
         threading.Thread(
-            target=sample_mac_status_loop,
+            target=sample_desktop_status_loop,
             args=(
                 status_state,
-                temperature,
+                usage_state,
                 stop_event,
                 args.sample_seconds,
                 args.network_interface,
@@ -632,7 +662,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.night_brightness,
                 args.offline_brightness,
             ),
-            name="mac-status-sampler",
+            name="desktop-status-sampler",
             daemon=True,
         ),
     ]
@@ -661,7 +691,6 @@ def main(argv: list[str] | None = None) -> int:
         stop_event.set()
         server.shutdown()
         server.server_close()
-        temperature.stop()
         for thread in threads:
             thread.join(timeout=2)
     return 0

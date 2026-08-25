@@ -28,12 +28,14 @@ prominent modification notice and date are in `README.md`.
   TFT_eSPI. Redistributors of binaries should retain the notices supplied with
   those packages.
 
-## ChatGPT/Codex icon and names
+## USB status screen ChatGPT/Codex icon and names
 
 `src/img/chatgpt_24.h` is a 24 x 24 monochrome rasterisation, at the original
 aspect ratio, of CodexBar's `ProviderIcon-codex.svg`. CodexBar is copyright
 Peter Steinberger and distributed under the
 [MIT License](https://github.com/steipete/CodexBar/blob/main/LICENSE).
+The weather-clock firmware does not display or request Codex data; this shared
+asset is included only by the separate USB system-status firmware.
 
 OpenAI, ChatGPT, Codex and the associated mark are trademarks or marks of their
 respective owner. They are used only to identify interoperability and the data

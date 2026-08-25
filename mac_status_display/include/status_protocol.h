@@ -10,14 +10,15 @@
 
 namespace macstatus {
 
-constexpr int16_t kMissingTemperature = INT16_MIN;
+constexpr int16_t kMissingCodexUsage = -1;
 constexpr size_t kMaximumFrameLength = 112;
 
 struct StatusFrame {
   uint16_t sequence;
   uint16_t cpuTenths;
   uint16_t memoryTenths;
-  int16_t temperatureTenths;
+  int16_t codexRemainingTenths;
+  bool codexUsageStale;
   uint32_t downloadBytesPerSecond;
   uint32_t uploadBytesPerSecond;
   uint8_t brightnessPercent;
@@ -66,7 +67,7 @@ inline bool parseSigned(const char *text, int32_t minimum, int32_t maximum, int3
 }
 
 // Parses a mutable line in the form:
-// $MSD2,seq,cpu10,mem10,temp10,down_bps,up_bps,brightness,offline_brightness*CRC16
+// $MSD3,seq,cpu10,mem10,codex_remaining10,codex_stale,down_bps,up_bps,brightness,offline_brightness*CRC16
 inline bool parseStatusFrame(char *line, StatusFrame &output) {
   if (line == nullptr || line[0] != '$') return false;
   char *star = strrchr(line, '*');
@@ -84,38 +85,40 @@ inline bool parseStatusFrame(char *line, StatusFrame &output) {
 
   *star = '\0';
   char *save = nullptr;
-  char *tokens[9] = {};
+  char *tokens[10] = {};
   size_t tokenCount = 0;
   for (char *token = strtok_r(line + 1, ",", &save); token != nullptr;
        token = strtok_r(nullptr, ",", &save)) {
-    if (tokenCount >= 9) return false;
+    if (tokenCount >= 10) return false;
     tokens[tokenCount++] = token;
   }
-  if (tokenCount != 9 || strcmp(tokens[0], "MSD2") != 0) return false;
+  if (tokenCount != 10 || strcmp(tokens[0], "MSD3") != 0) return false;
 
   uint32_t sequence = 0;
   uint32_t cpu = 0;
   uint32_t memory = 0;
+  uint32_t codexStale = 0;
   uint32_t download = 0;
   uint32_t upload = 0;
   uint32_t brightness = 0;
   uint32_t offlineBrightness = 0;
-  int32_t temperature = 0;
+  int32_t codexRemaining = 0;
   if (!parseUnsigned(tokens[1], UINT16_MAX, sequence) ||
       !parseUnsigned(tokens[2], 1000, cpu) ||
       !parseUnsigned(tokens[3], 1000, memory) ||
-      !parseSigned(tokens[4], INT16_MIN, 1500, temperature) ||
-      !parseUnsigned(tokens[5], UINT32_MAX, download) ||
-      !parseUnsigned(tokens[6], UINT32_MAX, upload) ||
-      !parseUnsigned(tokens[7], 100, brightness) ||
-      !parseUnsigned(tokens[8], 100, offlineBrightness)) {
+      !parseSigned(tokens[4], kMissingCodexUsage, 1000, codexRemaining) ||
+      !parseUnsigned(tokens[5], 1, codexStale) ||
+      !parseUnsigned(tokens[6], UINT32_MAX, download) ||
+      !parseUnsigned(tokens[7], UINT32_MAX, upload) ||
+      !parseUnsigned(tokens[8], 100, brightness) ||
+      !parseUnsigned(tokens[9], 100, offlineBrightness)) {
     return false;
   }
-  if (temperature != kMissingTemperature && temperature < -400) return false;
 
   StatusFrame candidate = {
       static_cast<uint16_t>(sequence), static_cast<uint16_t>(cpu),
-      static_cast<uint16_t>(memory), static_cast<int16_t>(temperature),
+      static_cast<uint16_t>(memory), static_cast<int16_t>(codexRemaining),
+      codexStale != 0,
       download, upload, static_cast<uint8_t>(brightness),
       static_cast<uint8_t>(offlineBrightness)};
   output = candidate;

@@ -2,6 +2,7 @@
 #include <TFT_eSPI.h>
 
 #include "status_protocol.h"
+#include "../../src/img/chatgpt_24.h"
 
 namespace {
 
@@ -26,6 +27,8 @@ bool offlineDrawn = false;
 uint32_t lastValidFrameAt = 0;
 uint8_t currentBrightness = 255;
 uint8_t offlineBrightness = kDefaultOfflineBrightness;
+
+void drawCodexUsage(int16_t remainingTenths, bool stale);
 
 void drawDashedHorizontalLine(int16_t x, int16_t y, int16_t length,
                               uint16_t color) {
@@ -87,7 +90,7 @@ void drawStaticInterface() {
   display.setTextFont(2);
   display.setTextSize(1);
   display.setTextColor(TFT_WHITE, kBackground);
-  display.drawString("MAC STATUS", 10, 18);
+  display.drawString("SYSTEM STATUS", 10, 18);
   display.drawFastHLine(8, 35, 224, kPanelBorder);
 
   drawDashedBorder(8, 44, 108, 82, kPanelBorder);
@@ -100,11 +103,7 @@ void drawStaticInterface() {
   display.drawString("MEMORY", 134, 51);
 
   drawDashedBorder(8, 134, 224, 43, kPanelBorder);
-  display.fillCircle(25, 156, 7, kRed);
-  display.fillRoundRect(22, 141, 6, 20, 3, kRed);
-  display.setTextDatum(ML_DATUM);
-  display.setTextColor(kMuted, kBackground);
-  display.drawString("CPU TEMP", 40, 156);
+  drawCodexUsage(macstatus::kMissingCodexUsage, false);
 
   drawDashedBorder(8, 185, 224, 47, kPanelBorder);
   display.setTextFont(1);
@@ -148,25 +147,59 @@ void formatRate(uint32_t bytesPerSecond, char *output, size_t outputSize) {
            static_cast<unsigned long>(tenths % 10ULL), unit);
 }
 
-void drawTemperature(int16_t tenths) {
-  char value[12];
-  uint16_t color = TFT_WHITE;
-  if (tenths == macstatus::kMissingTemperature) {
-    snprintf(value, sizeof(value), "--.- C");
-    color = kYellow;
-  } else {
-    const bool negative = tenths < 0;
-    const uint16_t magnitude = static_cast<uint16_t>(negative ? -tenths : tenths);
-    snprintf(value, sizeof(value), "%s%u.%u C", negative ? "-" : "",
-             static_cast<unsigned>(magnitude / 10U),
-             static_cast<unsigned>(magnitude % 10U));
+void drawChatGptIcon(int16_t x, int16_t y, uint16_t color) {
+  for (uint8_t row = 0; row < 24; ++row) {
+    for (uint8_t column = 0; column < 24; ++column) {
+      const uint8_t bits = pgm_read_byte(chatgptIcon24 + row * 3 + column / 8);
+      if ((bits & (0x80 >> (column % 8))) != 0) {
+        display.drawPixel(x + column, y + row, color);
+      }
+    }
   }
-  display.fillRect(132, 141, 92, 29, kBackground);
+}
+
+void drawCodexUsage(int16_t remainingTenths, bool stale) {
+  const bool valid = remainingTenths != macstatus::kMissingCodexUsage;
+  uint16_t color = kMuted;
+  if (valid && !stale) {
+    color = remainingTenths >= 400 ? kGreen : (remainingTenths >= 150 ? kYellow : kRed);
+  }
+
+  display.fillRect(14, 140, 212, 31, kBackground);
+  drawChatGptIcon(17, 143, valid && !stale ? TFT_WHITE : kMuted);
+
+  display.setTextDatum(ML_DATUM);
+  display.setTextFont(1);
+  display.setTextSize(1);
+  display.setTextColor(stale ? kMuted : TFT_WHITE, kBackground);
+  display.drawString("CODEX LEFT", 49, 148);
+
+  char value[8];
+  if (valid) {
+    snprintf(value, sizeof(value), "%u%%",
+             static_cast<unsigned>((remainingTenths + 5) / 10));
+  } else {
+    snprintf(value, sizeof(value), "--");
+  }
   display.setTextDatum(MR_DATUM);
   display.setTextFont(2);
   display.setTextSize(1);
-  display.setTextColor(color, kBackground);
-  display.drawString(value, 218, 156);
+  display.setTextColor(valid && !stale ? TFT_WHITE : kMuted, kBackground);
+  display.drawString(value, 218, 148);
+
+  constexpr int16_t kBarX = 49;
+  constexpr int16_t kBarY = 160;
+  constexpr int16_t kBarWidth = 169;
+  display.drawRoundRect(kBarX, kBarY, kBarWidth, 7, 3, kPanelBorder);
+  if (valid && remainingTenths > 0) {
+    const int16_t filled = static_cast<int16_t>(
+        (static_cast<uint32_t>(kBarWidth - 2) * remainingTenths + 500U) / 1000U);
+    if (filled >= 4) {
+      display.fillRoundRect(kBarX + 1, kBarY + 1, filled, 5, 2, color);
+    } else {
+      display.fillRect(kBarX + 1, kBarY + 1, filled, 5, color);
+    }
+  }
 }
 
 void drawNetwork(uint32_t download, uint32_t upload) {
@@ -189,7 +222,7 @@ void drawFrame(const macstatus::StatusFrame &frame) {
   applyBrightness(frame.brightnessPercent);
   drawPercent(8, frame.cpuTenths);
   drawPercent(124, frame.memoryTenths);
-  drawTemperature(frame.temperatureTenths);
+  drawCodexUsage(frame.codexRemainingTenths, frame.codexUsageStale);
   drawNetwork(frame.downloadBytesPerSecond, frame.uploadBytesPerSecond);
   drawConnectionStatus("USB LIVE", kGreen);
   offlineDrawn = false;
@@ -199,7 +232,7 @@ void processLine() {
   if (serialOverflow || serialLength == 0) return;
   serialBuffer[serialLength] = '\0';
   macstatus::StatusFrame frame = {
-      0, 0, 0, macstatus::kMissingTemperature, 0, 0,
+      0, 0, 0, macstatus::kMissingCodexUsage, false, 0, 0,
       kDefaultDayBrightness, kDefaultOfflineBrightness};
   if (!macstatus::parseStatusFrame(serialBuffer, frame)) return;
   lastValidFrameAt = millis();
@@ -236,7 +269,7 @@ void setup() {
   display.setRotation(0);
   drawStaticInterface();
   lastValidFrameAt = millis();
-  Serial.println("MSD2 READY");
+  Serial.println("MSD3 READY");
 }
 
 void loop() {

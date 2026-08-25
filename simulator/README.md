@@ -1,12 +1,12 @@
 # Windows 原生界面模拟器
 
-该程序在 Windows 上直接预览 SmallDesktopDisplay 的 240 × 240 显示界面，不需要 ESP8266 或屏幕。它使用固件仓库内的真实天气/温度图标、三套动画、LineAtom 数字字模和 VLW 中文字体，并通过 RGB565 帧缓冲复现屏幕合成。
+该程序在 Windows 上直接预览天气屏的 240 × 240 显示界面，不需要 ESP8266 或屏幕。它使用固件仓库内的真实天气与温湿度图标、三套动画、LineAtom 数字字模和 VLW 中文字体，并通过 RGB565 帧缓冲复现屏幕合成。
 
 ## 直接使用便携包
 
-1. 解压 `SmallDesktopDisplaySimulator-1.6.3-windows-x64.zip`，不要只单独复制 EXE。
+1. 解压 `SmallDesktopDisplaySimulator-1.8.0-windows-x64.zip`，不要只单独复制 EXE。
 2. 双击 `SmallDesktopDisplaySimulator.exe`。
-3. 用右侧按钮切换场景、亮度、方向、动画、DHT、温度、Codex 剩余量与 AQI。
+3. 用右侧按钮切换场景、亮度、方向、动画、DHT、温度、湿度与 AQI。
 
 便携目录中的 `SDL3.dll` 必须与 EXE 放在同一目录。程序使用静态 MSVC 运行库，目标电脑不需要另装 Visual C++ Redistributable。
 
@@ -50,7 +50,7 @@ ZIP 输出到 `build\packages`。
 | 恢复当前场景 | `Home` |
 | 退出 | `Esc` |
 
-右侧按钮还能直接调整天气温度、Codex 剩余量和 AQI，用于观察边界颜色、文字宽度和布局。
+右侧按钮还能直接调整天气温度、湿度和 AQI，用于观察边界颜色、文字宽度和布局。
 
 ## 命令行与自动验证
 

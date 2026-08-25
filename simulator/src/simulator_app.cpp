@@ -36,8 +36,8 @@ enum class Action {
   ToggleDht,
   TemperatureDown,
   TemperatureUp,
-  CodexDown,
-  CodexUp,
+  HumidityDown,
+  HumidityUp,
   AqiDown,
   AqiUp,
   Pause,
@@ -61,8 +61,8 @@ const std::array<Button, 16> kButtons{{
     {{kPanelX + 145, 215, kButtonWidth, kButtonHeight}, "DHT [D]", Action::ToggleDht},
     {{kPanelX, 285, kButtonWidth, kButtonHeight}, "Temp -", Action::TemperatureDown},
     {{kPanelX + 145, 285, kButtonWidth, kButtonHeight}, "Temp +", Action::TemperatureUp},
-    {{kPanelX, 355, kButtonWidth, kButtonHeight}, "Codex remain -", Action::CodexDown},
-    {{kPanelX + 145, 355, kButtonWidth, kButtonHeight}, "Codex remain +", Action::CodexUp},
+    {{kPanelX, 355, kButtonWidth, kButtonHeight}, "Humidity -", Action::HumidityDown},
+    {{kPanelX + 145, 355, kButtonWidth, kButtonHeight}, "Humidity +", Action::HumidityUp},
     {{kPanelX, 425, kButtonWidth, kButtonHeight}, "AQI -", Action::AqiDown},
     {{kPanelX + 145, 425, kButtonWidth, kButtonHeight}, "AQI +", Action::AqiUp},
     {{kPanelX, 495, kButtonWidth, kButtonHeight}, "Pause [Space]", Action::Pause},
@@ -88,43 +88,44 @@ void applyScenario(int index, SimulatorState& state) {
       state.weather.city = "上海";
       state.weather.temperatureText = "26";
       state.weather.temperatureCelsius = 26.0F;
-      state.codex = {true, false, 58, 3 * 24 * 60};
+      state.weather.humidityText = "65%";
+      state.weather.relativeHumidity = 65;
       state.weather.aqi = 42;
       state.weather.weatherCode = 1;
       state.weather.banners = {{"天气 多云", "AQI 优 42", "风向 东南风3级",
-                                "今日 多云", "最低温度 22℃", "最高温度 29℃",
-                                "Codex 剩余58%，距离重置还有3天"}};
+                                "今日 多云", "最低温度 22℃", "最高温度 29℃"}};
       break;
     case 1:
       state.weather.city = "北京";
       state.weather.temperatureText = "8";
       state.weather.temperatureCelsius = 8.0F;
-      state.codex = {true, false, 26, 18 * 60};
+      state.weather.humidityText = "38%";
+      state.weather.relativeHumidity = 38;
       state.weather.aqi = 118;
       state.weather.weatherCode = 53;
       state.weather.banners = {{"天气 霾", "AQI 轻度 118", "风向 北风4级",
-                                "今日 霾", "最低温度 1℃", "最高温度 10℃",
-                                "Codex 剩余26%，距离重置还有18小时"}};
+                                "今日 霾", "最低温度 1℃", "最高温度 10℃"}};
       break;
     case 2:
       state.weather.city = "广州";
       state.weather.temperatureText = "31.5";
       state.weather.temperatureCelsius = 31.5F;
-      state.codex = {true, true, 9, 45};
+      state.weather.humidityText = "96%";
+      state.weather.relativeHumidity = 96;
       state.weather.aqi = 76;
       state.weather.weatherCode = 9;
       state.weather.banners = {{"天气 大雨", "AQI 良 76", "风向 南风3级",
-                                "今日 大雨", "最低温度 26℃", "最高温度 33℃",
-                                "Codex 剩余9%，距离重置还有45分钟 -"}};
+                                "今日 大雨", "最低温度 26℃", "最高温度 33℃"}};
       break;
     default:
       state.weather.city = "OFFLINE";
       state.weather.temperatureText = "--";
       state.weather.temperatureCelsius = -10.0F;
-      state.codex = {false, false, 0, 0};
+      state.weather.humidityText = "--%";
+      state.weather.relativeHumidity = 0;
       state.weather.aqi = -1;
       state.weather.weatherCode = 999;
-      state.weather.banners = {{"WEATHER WAIT", "AQI --", "", "", "", "", "Codex 剩余--"}};
+      state.weather.banners = {{"WEATHER WAIT", "AQI --", "", "", "", ""}};
       state.calendar.banners = {{"NTP WAIT", "", "农历未存", "", ""}};
       state.settings.animation = AnimationKind::None;
       break;
@@ -180,13 +181,13 @@ void performAction(Action action, SimulatorState& state, int& scenario,
       state.weather.temperatureCelsius = std::min(50.0F, state.weather.temperatureCelsius + 1.0F);
       state.weather.temperatureText = std::to_string(static_cast<int>(state.weather.temperatureCelsius));
       break;
-    case Action::CodexDown:
-      state.codex.valid = true;
-      state.codex.remainingPercent = std::max(0, state.codex.remainingPercent - 5);
+    case Action::HumidityDown:
+      state.weather.relativeHumidity = std::max(0, state.weather.relativeHumidity - 5);
+      state.weather.humidityText = std::to_string(state.weather.relativeHumidity) + "%";
       break;
-    case Action::CodexUp:
-      state.codex.valid = true;
-      state.codex.remainingPercent = std::min(100, state.codex.remainingPercent + 5);
+    case Action::HumidityUp:
+      state.weather.relativeHumidity = std::min(100, state.weather.relativeHumidity + 5);
+      state.weather.humidityText = std::to_string(state.weather.relativeHumidity) + "%";
       break;
     case Action::AqiDown: state.weather.aqi = std::max(-1, state.weather.aqi - 25); break;
     case Action::AqiUp: state.weather.aqi = std::min(500, state.weather.aqi + 25); break;
@@ -234,8 +235,7 @@ void drawPanel(SDL_Renderer* renderer, const SimulatorState& state, int scenario
   SDL_RenderDebugText(renderer, kPanelX, 255.0F, buffer);
   std::snprintf(buffer, sizeof(buffer), "Temperature: %.1f C", state.weather.temperatureCelsius);
   SDL_RenderDebugText(renderer, kPanelX, 325.0F, buffer);
-  std::snprintf(buffer, sizeof(buffer), "Codex remaining: %d%%%s", state.codex.remainingPercent,
-                state.codex.stale ? " (stale)" : "");
+  std::snprintf(buffer, sizeof(buffer), "Humidity: %d%%", state.weather.relativeHumidity);
   SDL_RenderDebugText(renderer, kPanelX, 395.0F, buffer);
   std::snprintf(buffer, sizeof(buffer), "AQI: %d", state.weather.aqi);
   SDL_RenderDebugText(renderer, kPanelX, 465.0F, buffer);

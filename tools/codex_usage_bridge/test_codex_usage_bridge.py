@@ -80,6 +80,30 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(69, snapshot.remaining_percent)
         self.assertEqual(60, snapshot.reset_minutes)
 
+    def test_parse_usage_array_prefers_weekly_over_monthly(self) -> None:
+        snapshot = bridge.parse_usage_response(
+            {
+                "rate_limits": [
+                    {
+                        "used_percent": 73,
+                        "limit_window_seconds": 30 * 86400,
+                    },
+                    {
+                        "used_percent": 28,
+                        "limit_window_seconds": 7 * 86400,
+                    },
+                    {
+                        "used_percent": 9,
+                        "limit_window_seconds": 5 * 3600,
+                    },
+                ]
+            },
+            now=1_000,
+        )
+        self.assertEqual(28, snapshot.used_percent)
+        self.assertEqual(72, snapshot.remaining_percent)
+        self.assertEqual(7 * 86400, snapshot.window_seconds)
+
     def test_fetch_sends_token_and_returns_sanitized_snapshot(self) -> None:
         response_body = json.dumps(
             {

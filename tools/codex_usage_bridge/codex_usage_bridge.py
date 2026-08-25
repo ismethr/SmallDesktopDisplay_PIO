@@ -31,13 +31,15 @@ from typing import Any, Mapping
 
 DEFAULT_AUTH_FILE = Path("~/.codex/auth.json").expanduser()
 DEFAULT_UPSTREAM_URL = "https://chatgpt.com/backend-api/wham/usage"
-DEFAULT_LISTEN_HOST = "0.0.0.0"
+DEFAULT_LISTEN_HOST = "127.0.0.1"
 DEFAULT_LISTEN_PORT = 8766
-DEFAULT_REFRESH_SECONDS = 300
+DEFAULT_REFRESH_SECONDS = 60
 DEFAULT_TIMEOUT_SECONDS = 20
 USER_AGENT = "SmallDesktopDisplay-CodexBridge/1.0"
 TRUSTED_UPSTREAM_HOSTS = {"chatgpt.com"}
 LOOPBACK_UPSTREAM_HOSTS = {"localhost", "127.0.0.1", "::1"}
+WEEKLY_WINDOW_MIN_SECONDS = 6 * 86400
+WEEKLY_WINDOW_MAX_SECONDS = 8 * 86400
 
 
 class BridgeError(RuntimeError):
@@ -175,26 +177,46 @@ def validate_upstream_url(upstream_url: str) -> None:
 def parse_usage_response(payload: Mapping[str, Any], now: float | None = None) -> UsageSnapshot:
     now = time.time() if now is None else now
     rate_limit = payload.get("rate_limit")
-    if not isinstance(rate_limit, dict):
-        raise BridgeError("Codex usage response has no rate_limit object")
-
     windows: list[tuple[int, Mapping[str, Any]]] = []
-    fallbacks = {"primary_window": 5 * 3600, "secondary_window": 7 * 86400}
-    for name, fallback in fallbacks.items():
-        candidate = rate_limit.get(name)
+
+    def add_window(candidate: Any, field: str, fallback: int | None = None) -> None:
         if not isinstance(candidate, dict):
-            continue
+            return
         seconds_value = candidate.get("limit_window_seconds", fallback)
-        seconds = int(_number(seconds_value, f"{name}.limit_window_seconds"))
+        if seconds_value is None:
+            return
+        seconds = int(_number(seconds_value, f"{field}.limit_window_seconds"))
         if seconds > 0:
             windows.append((seconds, candidate))
+
+    if isinstance(rate_limit, dict):
+        fallbacks = {"primary_window": 5 * 3600, "secondary_window": 7 * 86400}
+        for name, fallback in fallbacks.items():
+            add_window(rate_limit.get(name), name, fallback)
+
+    # Newer responses may expose an unordered array containing session,
+    # weekly and monthly windows. Keep the weekly card independent of order.
+    rate_limits = payload.get("rate_limits")
+    if isinstance(rate_limits, list):
+        for index, candidate in enumerate(rate_limits):
+            add_window(candidate, f"rate_limits[{index}]")
+
     if not windows:
         raise BridgeError("Codex usage response contains no usable window")
 
-    # Prefer a weekly/long window. Accounts that only expose a short window
-    # still receive a useful value instead of a blank display.
+    # A monthly window is longer than a weekly one, so "pick the longest"
+    # would mislabel monthly quota as weekly. Match CodexBar's cadence-based
+    # selection, with a useful long/short fallback for unusual account shapes.
+    weekly_windows = [
+        item
+        for item in windows
+        if WEEKLY_WINDOW_MIN_SECONDS <= item[0] <= WEEKLY_WINDOW_MAX_SECONDS
+    ]
     long_windows = [item for item in windows if item[0] >= 2 * 86400]
-    window_seconds, selected = max(long_windows or windows, key=lambda item: item[0])
+    window_seconds, selected = max(
+        weekly_windows or long_windows or windows,
+        key=lambda item: item[0],
+    )
     used = int(round(_number(selected.get("used_percent"), "used_percent")))
     used = max(0, min(100, used))
 

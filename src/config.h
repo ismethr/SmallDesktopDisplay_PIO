@@ -12,7 +12,7 @@
 #define DHT_ENABLED 0
 #endif
 #ifndef LAN_ADMIN_ENABLED
-#define LAN_ADMIN_ENABLED 1
+#define LAN_ADMIN_ENABLED 0
 #endif
 
 // Compatibility aliases used by the original modules.
@@ -37,10 +37,6 @@
 #define WIFI_CONNECT_TIMEOUT_MS 15000UL
 #define CONFIG_PORTAL_TIMEOUT_SECONDS 180
 #define WEATHER_HTTP_TIMEOUT_MS 10000
-#define CODEX_BRIDGE_HTTP_TIMEOUT_MS 4000
-#define CODEX_BRIDGE_DEFAULT_PORT 8766
-#define DEFAULT_CODEX_BRIDGE_HOST ""
-#define DEFAULT_WEATHER_INTERVAL_MINUTES 10
 
 // Backlight schedule. The saved/user-selected value remains the daytime
 // brightness. A valid NTP time is required before night dimming is applied.

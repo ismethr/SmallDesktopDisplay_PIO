@@ -63,16 +63,6 @@ class DisplayFontCoverageTests(unittest.TestCase):
         )
         self.assertEqual([], missing, f"missing weather fallback glyphs: {missing!r}")
 
-    def test_codex_remaining_banner_is_supported(self):
-        missing = sorted(
-            {
-                char
-                for char in "Codex 剩余100%，距离重置还有99天23小时59分钟 --"
-                if char != " " and char not in self.weather_glyphs
-            }
-        )
-        self.assertEqual([], missing, f"missing Codex remaining glyphs: {missing!r}")
-
     def test_current_weather_city_is_supported(self):
         missing = sorted({char for char in "呈贡" if char not in self.weather_glyphs})
         self.assertEqual([], missing, f"missing current city glyphs: {missing!r}")

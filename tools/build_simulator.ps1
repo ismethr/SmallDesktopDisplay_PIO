@@ -5,6 +5,9 @@ param(
 
     [string]$BuildDirectory = '',
 
+    [ValidateRange(1, 64)]
+    [int]$Jobs = 4,
+
     [switch]$Clean,
     [switch]$Run,
     [switch]$Package
@@ -169,7 +172,7 @@ Invoke-CheckedNativeCommand -FilePath $cmake -Arguments @(
 Invoke-CheckedNativeCommand -FilePath $cmake -Arguments @(
     '--build', $BuildDirectory,
     '--config', $Configuration,
-    '--parallel'
+    '--parallel', $Jobs
 )
 
 $executable = Join-Path $BuildDirectory `

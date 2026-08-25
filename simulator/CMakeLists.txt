@@ -4,7 +4,7 @@ cmake_policy(SET CMP0091 NEW)
 
 project(
   SmallDesktopDisplaySimulator
-  VERSION 1.6.3
+  VERSION 1.8.0
   DESCRIPTION "Windows-native simulator for the SmallDesktopDisplay firmware UI"
   LANGUAGES C CXX
 )

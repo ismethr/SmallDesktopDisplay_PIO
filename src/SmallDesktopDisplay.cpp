@@ -30,7 +30,6 @@
 #include <TimeLib.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
-#include <ESP8266WebServer.h>
 #include <WiFiUdp.h>
 #include <TFT_eSPI.h>
 #include <SPI.h>
@@ -43,6 +42,7 @@
 
 #include "config.h"                  //配置文件
 #if ADMIN_WEB_EN
+#include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #endif
 #include "weatherNum/weatherNum.h"   //天气图库
@@ -50,7 +50,7 @@
 #include "font/font_td_20.h"         //字体库
 #include "core/DisplayLogic.h"       //纯逻辑与边界校验
 
-#define Version "SDD V1.7.1"
+#define Version "SDD V1.8.0"
 /* *****************************************************************
  *  配置使能位
  * *****************************************************************/
@@ -78,7 +78,7 @@ Button2 Button_sw1 = Button2(4);
 #include "font/ZdyLwFont_20.h"  //字体库
 #include "font/timeClockFont.h" //字体库
 #include "img/temperature.h"    //温度图标
-#include "img/chatgpt_24.h"     //ChatGPT 图标
+#include "img/humidity.h"       //湿度图标
 
 // 函数声明
 void sendNTPpacket(IPAddress &address); // 向NTP服务器发送请求
@@ -90,7 +90,6 @@ void readwificonfig();         // 从eeprom读取WiFi信息ssid，psw
 void deletewificonfig();       // 删除原有eeprom中的信息
 void getCityCode();            // 发送HTTP请求并且将服务器响应通过串口输出
 void getCityWeather();          // 获取城市天气
-void getCodexUsage();           // 获取 Codex 订阅用量（经本机桥接）
 void wifi_reset(Button2 &btn); // WIFI重设
 void saveParamCallback();
 void cycle_brightness(Button2 &btn);
@@ -100,15 +99,12 @@ void refresh_AnimatedImage();                                    // 更新右下
 void openWifi();
 void closeWifi();
 void reflashTime();
-void updateWeatherInterval();
 bool parseStrictInt(const String &text, int &value);
 void applyBacklight(int brightness);
 void refreshBacklightSchedule();
 void printDeviceStatus();
 void digitalClockDisplay(int reflash_en);
 void reflashBanner();
-void drawCodexUsage();
-void updateCodexBanner();
 #if ADMIN_WEB_EN
 void startAdminServer();
 void serviceAdminWeb();
@@ -121,13 +117,11 @@ extern int Second_sign;
 Thread reflash_time = Thread();
 // 创建副标题切换线程
 Thread reflash_Banner = Thread();
-// 创建恢复WIFI链接
-Thread reflash_openWifi = Thread();
 // 创建动画绘制线程
 Thread reflash_Animate = Thread();
 
 // 创建协程池
-StaticThreadController<4> controller(&reflash_time, &reflash_Banner, &reflash_openWifi, &reflash_Animate);
+StaticThreadController<3> controller(&reflash_time, &reflash_Banner, &reflash_Animate);
 
 /* *****************************************************************
  *  参数设置
@@ -141,19 +135,7 @@ struct config_type
 // 如开启WEB配网则可不用设置这里的参数，前一个为wifi ssid，后一个为密码
 config_type wificonf = {{"WiFi名"}, {"密码"}};
 
-// 天气更新时间  X 分钟
-unsigned int weatherUpdateIntervalMinutes = DEFAULT_WEATHER_INTERVAL_MINUTES;
-
 //----------------------------------------------------
-
-void updateWeatherInterval()
-{
-  if (!sdd::isValidWeatherInterval(weatherUpdateIntervalMinutes))
-  {
-    weatherUpdateIntervalMinutes = DEFAULT_WEATHER_INTERVAL_MINUTES;
-  }
-  reflash_openWifi.setInterval(static_cast<unsigned long>(weatherUpdateIntervalMinutes) * 60UL * TMS);
-}
 
 // LCD屏幕相关设置
 TFT_eSPI tft = TFT_eSPI(); // 引脚请自行配置tft_espi库中的 User_Setup.h文件
@@ -172,7 +154,6 @@ int DHT_img_flag = 0;        // DHT传感器使用标志位
 constexpr int BL_addr = 1;
 constexpr int Ro_addr = 2;
 constexpr int DHT_addr = 3;
-constexpr int WeatherInterval_addr = 4;
 constexpr int CC_addr = 10;
 constexpr int wifi_addr = 30;
 constexpr size_t STORED_SSID_BYTES = 32;
@@ -182,14 +163,6 @@ constexpr int WifiVersion_addr = 127;
 constexpr int WifiCrc_addr = 128;
 constexpr uint8_t WIFI_CONFIG_MAGIC = 0xA5;
 constexpr uint8_t WIFI_CONFIG_VERSION = 1;
-constexpr int CodexHost_addr = 160;
-constexpr size_t CODEX_HOST_BYTES = 64;
-constexpr int CodexHostMagic_addr = CodexHost_addr + CODEX_HOST_BYTES;
-constexpr int CodexHostVersion_addr = CodexHostMagic_addr + 1;
-constexpr int CodexHostCrc_addr = CodexHostVersion_addr + 1;
-constexpr uint8_t CODEX_HOST_MAGIC = 0xC7;
-constexpr uint8_t CODEX_HOST_VERSION = 1;
-char codexBridgeHost[CODEX_HOST_BYTES] = DEFAULT_CODEX_BRIDGE_HOST;
 
 uint16_t wifiConfigCrcFromEeprom()
 {
@@ -211,17 +184,9 @@ WeatherNum wrat;
 String defcityCode = "101020200"; // 默认天气城市代码
 String cityCode = defcityCode; // 天气城市代码
 int tempnum = 0;               // 温度百分比
+int huminum = 0;               // 湿度百分比
 int tempcol = 0xffff;          // 温度显示颜色
-
-struct CodexUsageState
-{
-  bool valid = false;
-  bool stale = false;
-  uint8_t remainingPercent = 0;
-  unsigned long resetMinutes = 0;
-  bool hasResetMinutes = false;
-};
-CodexUsageState codexUsage;
+int humicol = 0xffff;           // 湿度显示颜色
 
 // NTP服务器参数
 static const char *const ntpServerNames[] = {
@@ -252,7 +217,6 @@ enum class NetworkRefreshStage : uint8_t
   WaitingForWifi,
   SyncTime,
   Weather,
-  CodexUsage,
   Finish,
 };
 NetworkRefreshStage networkRefreshStage = NetworkRefreshStage::Idle;
@@ -331,98 +295,6 @@ void savewificonfig()
   EEPROM.commit();
 }
 
-uint16_t codexHostConfigCrcFromEeprom()
-{
-  uint16_t crc = 0xFFFF;
-  for (size_t i = 0; i < CODEX_HOST_BYTES; i++)
-  {
-    crc ^= static_cast<uint16_t>(EEPROM.read(CodexHost_addr + i)) << 8;
-    for (uint8_t bit = 0; bit < 8; bit++)
-      crc = (crc & 0x8000) ? static_cast<uint16_t>((crc << 1) ^ 0x1021) : static_cast<uint16_t>(crc << 1);
-  }
-  return crc;
-}
-
-bool isValidCodexBridgeHost(String value)
-{
-  value.trim();
-  if (value.length() == 0)
-    return true; // empty disables the optional feature
-  if (value.length() >= CODEX_HOST_BYTES || value.indexOf("//") >= 0 ||
-      value.startsWith(".") || value.startsWith(":") || value.endsWith(".") || value.endsWith(":"))
-    return false;
-
-  int colonIndex = -1;
-  for (size_t i = 0; i < value.length(); i++)
-  {
-    const char c = value[i];
-    const bool hostCharacter = isAlphaNumeric(c) || c == '.' || c == '-' || c == '_';
-    if (c == ':')
-    {
-      if (colonIndex >= 0)
-        return false; // keep the ESP URL builder intentionally IPv4/hostname-only
-      colonIndex = static_cast<int>(i);
-    }
-    else if (!hostCharacter)
-      return false;
-  }
-  if (colonIndex >= 0)
-  {
-    const String portText = value.substring(colonIndex + 1);
-    int port = 0;
-    if (!parseStrictInt(portText, port) || port < 1 || port > 65535)
-      return false;
-  }
-  return true;
-}
-
-void stageCodexBridgeHost(const String &host)
-{
-  String normalized = host;
-  normalized.trim();
-  strlcpy(codexBridgeHost, normalized.c_str(), sizeof(codexBridgeHost));
-  for (size_t i = 0; i < CODEX_HOST_BYTES; i++)
-    EEPROM.write(CodexHost_addr + i, i < strlen(codexBridgeHost) ? codexBridgeHost[i] : 0);
-  const uint16_t crc = codexHostConfigCrcFromEeprom();
-  EEPROM.write(CodexHostMagic_addr, CODEX_HOST_MAGIC);
-  EEPROM.write(CodexHostVersion_addr, CODEX_HOST_VERSION);
-  EEPROM.write(CodexHostCrc_addr, crc & 0xFF);
-  EEPROM.write(CodexHostCrc_addr + 1, crc >> 8);
-}
-
-void saveCodexBridgeHost(const String &host)
-{
-  stageCodexBridgeHost(host);
-  EEPROM.commit();
-}
-
-void readCodexBridgeHost()
-{
-  strlcpy(codexBridgeHost, DEFAULT_CODEX_BRIDGE_HOST, sizeof(codexBridgeHost));
-  const uint16_t storedCrc = EEPROM.read(CodexHostCrc_addr) |
-                             (static_cast<uint16_t>(EEPROM.read(CodexHostCrc_addr + 1)) << 8);
-  if (EEPROM.read(CodexHostMagic_addr) != CODEX_HOST_MAGIC ||
-      EEPROM.read(CodexHostVersion_addr) != CODEX_HOST_VERSION ||
-      storedCrc != codexHostConfigCrcFromEeprom())
-    return;
-
-  String stored;
-  stored.reserve(CODEX_HOST_BYTES - 1);
-  for (size_t i = 0; i < CODEX_HOST_BYTES - 1; i++)
-  {
-    const uint8_t value = EEPROM.read(CodexHost_addr + i);
-    if (value == 0)
-      break;
-    if (value == 0xFF)
-      return;
-    stored += static_cast<char>(value);
-  }
-  if (isValidCodexBridgeHost(stored))
-    strlcpy(codexBridgeHost, stored.c_str(), sizeof(codexBridgeHost));
-  else
-    mySerialPrintln("Stored Codex bridge host failed validation");
-}
-
 // TFT屏幕输出函数
 bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap)
 {
@@ -466,66 +338,19 @@ void loading(byte delayTime) // 绘制进度条
   delay(delayTime);
 }
 
-void drawChatGptIcon(uint16_t color)
-{
-  for (uint8_t y = 0; y < 24; y++)
-  {
-    for (uint8_t x = 0; x < 24; x++)
-    {
-      const uint8_t bits = pgm_read_byte(chatgptIcon24 + y * 3 + x / 8);
-      if (bits & (0x80 >> (x % 8)))
-        clk.drawPixel(x, y, color);
-    }
-  }
-}
-
-// Codex 订阅用量：复用原室外湿度一行，避免增加新页面。
-void drawCodexUsage()
+// 湿度图标显示函数
+void humidityWin()
 {
   clk.setColorDepth(8);
-  if (clk.createSprite(24, 24) == nullptr)
-  {
-    mySerialPrintln("ChatGPT icon skipped: sprite allocation failed");
-    return;
-  }
-  clk.fillSprite(bgColor);
-  const uint16_t iconColor = !codexUsage.valid || codexUsage.stale ? 0x8410 : TFT_WHITE;
-  drawChatGptIcon(iconColor);
-  clk.pushSprite(15, 213);
-  clk.deleteSprite();
-
-  const uint16_t barColor = !codexUsage.valid || codexUsage.stale
-                                ? 0x8410
-                                : (codexUsage.remainingPercent >= 40
-                                       ? TFT_GREEN
-                                       : (codexUsage.remainingPercent >= 15 ? TFT_YELLOW : TFT_RED));
   if (clk.createSprite(52, 6) == nullptr)
   {
-    mySerialPrintln("Codex bar skipped: sprite allocation failed");
+    mySerialPrintln("Humidity bar skipped: sprite allocation failed");
     return;
   }
-  clk.fillSprite(bgColor);
-  clk.drawRoundRect(0, 0, 52, 6, 3, TFT_WHITE);
-  const uint8_t barWidth = sdd::codexRemainingBarWidth(codexUsage.remainingPercent);
-  if (codexUsage.valid && barWidth > 0)
-    clk.fillRoundRect(1, 1, barWidth, 4, 2, barColor);
+  clk.fillSprite(0x0000);
+  clk.drawRoundRect(0, 0, 52, 6, 3, 0xFFFF);
+  clk.fillRoundRect(1, 1, sdd::humidityBarWidth(huminum), 4, 2, humicol);
   clk.pushSprite(45, 222);
-  clk.deleteSprite();
-
-  if (clk.createSprite(58, 24) == nullptr)
-  {
-    mySerialPrintln("Codex percentage skipped: sprite allocation failed");
-    return;
-  }
-  clk.loadFont(ZdyLwFont_20);
-  clk.fillSprite(bgColor);
-  clk.setTextWrap(false);
-  clk.setTextDatum(CC_DATUM);
-  clk.setTextColor(codexUsage.valid ? TFT_WHITE : 0x8410, bgColor);
-  String percentage = codexUsage.valid ? String(codexUsage.remainingPercent) + "%" : "--";
-  clk.drawString(percentage, 28, 13);
-  clk.pushSprite(100, 214);
-  clk.unloadFont();
   clk.deleteSprite();
 }
 
@@ -694,6 +519,18 @@ bool readOptionalJsonText(JsonObjectConst object, const char *field, String &val
   return true;
 }
 
+bool parseHumidityText(const String &text, int &humidity)
+{
+  String numeric = text;
+  numeric.trim();
+  if (numeric.endsWith("%"))
+  {
+    numeric.remove(numeric.length() - 1);
+    numeric.trim();
+  }
+  return parseStrictInt(numeric, humidity) && sdd::isValidHumidity(humidity);
+}
+
 bool parseWeatherCodeText(const String &text, int &weatherCode)
 {
   String numeric = text;
@@ -770,9 +607,6 @@ void printDeviceStatus()
   mySerialPrintln(WiFi.status() == WL_CONNECTED ? "connected" : "disconnected");
   mySerialPrint("City code: ");
   mySerialPrintln(cityCode);
-  mySerialPrint("Weather interval: ");
-  mySerialPrint(weatherUpdateIntervalMinutes);
-  mySerialPrintln(" min");
   mySerialPrint("Brightness day / current / rotation: ");
   mySerialPrint(LCD_BL_PWM);
   mySerialPrint(" / ");
@@ -786,17 +620,7 @@ void printDeviceStatus()
   mySerialPrint(":00 @ ");
   mySerialPrint(NIGHT_DIM_BRIGHTNESS);
   mySerialPrintln("%");
-  mySerialPrint("Codex bridge: ");
-  mySerialPrintln(strlen(codexBridgeHost) ? codexBridgeHost : "<disabled>");
-  mySerialPrint("Codex remaining: ");
-  if (codexUsage.valid)
-  {
-    mySerialPrint(codexUsage.remainingPercent);
-    mySerialPrint(codexUsage.stale ? "% (stale)" : "%");
-    mySerialPrintln("");
-  }
-  else
-    mySerialPrintln("unavailable");
+  mySerialPrintln("Network policy: startup/manual refresh only");
 #if ADMIN_WEB_EN
   mySerialPrint("LAN admin: ");
   if (WiFi.status() == WL_CONNECTED)
@@ -898,43 +722,10 @@ void Serial_set()
           digitalClockDisplay(1);
           reflashBanner();
           TJpgDec.drawJpg(15, 183, temperature, sizeof(temperature));
-          drawCodexUsage();
+          TJpgDec.drawJpg(15, 213, humidity, sizeof(humidity));
           mySerialPrintln("Screen orientation updated");
         }
         else mySerialPrintln("Screen orientation must be 0-3");
-        return;
-      }
-      else if (cmd == "0x04")
-      {
-        int interval = 0;
-        if (parseStrictInt(arg, interval) && sdd::isValidWeatherInterval(interval))
-        {
-          weatherUpdateIntervalMinutes = interval;
-          updateWeatherInterval();
-          EEPROM.write(WeatherInterval_addr, interval);
-          EEPROM.commit();
-          mySerialPrintln("Weather interval updated");
-        }
-        else mySerialPrintln("Weather interval must be 1-60 minutes");
-        return;
-      }
-      else if (cmd == "0x09") // Codex 桥接地址，例如 192.168.1.20:8766
-      {
-        if (arg == "-" || arg.equalsIgnoreCase("off"))
-          arg = "";
-        if (isValidCodexBridgeHost(arg))
-        {
-          saveCodexBridgeHost(arg);
-          codexUsage = CodexUsageState();
-          updateCodexBanner();
-          drawCodexUsage();
-          mySerialPrint("Codex bridge updated: ");
-          mySerialPrintln(strlen(codexBridgeHost) ? codexBridgeHost : "<disabled>");
-          if (WiFi.status() == WL_CONNECTED && strlen(codexBridgeHost))
-            getCodexUsage();
-        }
-        else
-          mySerialPrintln("Codex bridge must be hostname/IP with optional :port");
         return;
       }
       else if (cmd == "0x07") // 立即更新时间
@@ -1019,7 +810,7 @@ void Serial_set()
         digitalClockDisplay(1);
         reflashBanner();
         TJpgDec.drawJpg(15, 183, temperature, sizeof(temperature)); // 温度图标
-        drawCodexUsage();
+        TJpgDec.drawJpg(15, 213, humidity, sizeof(humidity));       // 湿度图标
 
         mySerialPrint("Screen orientation is set to：");
         mySerialPrintln(RoSet);
@@ -1028,24 +819,6 @@ void Serial_set()
       {
         mySerialPrintln("Screen orientation value is wrong, please enter a value within 0-3");
       }
-      return;
-    }
-    if (SMOD == "0x04") // 设置天气更新时间
-    {
-      int wtup = 0;
-      if (parseStrictInt(incomingByte, wtup) && sdd::isValidWeatherInterval(wtup))
-      {
-        weatherUpdateIntervalMinutes = wtup;
-        updateWeatherInterval();
-        EEPROM.write(WeatherInterval_addr, wtup);
-        EEPROM.commit();
-        SMOD = "";
-        Serial.printf("Weather update time changed to：");
-        mySerialPrint(weatherUpdateIntervalMinutes);
-        mySerialPrintln("minutes");
-      }
-      else
-        mySerialPrintln("Update too long, please reset (1-60)");
       return;
     }
     // 如果之前没有模式，则把当前输入作为命令
@@ -1063,13 +836,6 @@ void Serial_set()
       mySerialPrintln("1-USB connector facing right");
       mySerialPrintln("2-USB ports facing up");
       mySerialPrintln("3-USB port facing left");
-    }
-    else if (SMOD == "0x04")
-    {
-      mySerialPrint("Current weather update time:");
-      mySerialPrint(weatherUpdateIntervalMinutes);
-      mySerialPrintln("minutes");
-      mySerialPrintln("Please enter the weather update time (1-60) minutes");
     }
     else if (SMOD == "0x05")
     {
@@ -1103,7 +869,6 @@ void Serial_set()
       mySerialPrintln("Brightness Setting Input 0x01");
       mySerialPrintln("Address setting input 0x02");
       mySerialPrintln("Screen orientation setting input 0x03"); 
-      mySerialPrintln("Change weather update time 0x04"); 
       mySerialPrintln("Reset WiFi (it will reboot) 0x05");
       mySerialPrintln("Reset Time 0x07");
       mySerialPrintln("Show device status 0x00");
@@ -1168,11 +933,8 @@ void Webconfig()
   }
   WiFiManagerParameter custom_rot(rotationOptions.c_str()); // custom html input
   char brightnessValue[4];
-  char intervalValue[4];
   char cityValue[10];
-  char codexHostValue[CODEX_HOST_BYTES];
   snprintf(brightnessValue, sizeof(brightnessValue), "%d", LCD_BL_PWM);
-  snprintf(intervalValue, sizeof(intervalValue), "%u", weatherUpdateIntervalMinutes);
   long storedCityCode = 0;
   for (int cnum = 5; cnum > 0; cnum--)
   {
@@ -1180,7 +942,6 @@ void Webconfig()
   }
   snprintf(cityValue, sizeof(cityValue), "%ld",
            sdd::isValidCityCode(storedCityCode) ? storedCityCode : 0L);
-  strlcpy(codexHostValue, codexBridgeHost, sizeof(codexHostValue));
   String brightnessLabel = "日间亮度（0-100；夜间自动" + String(NIGHT_DIM_BRIGHTNESS) + "）";
   WiFiManagerParameter custom_bl("LCDBL", brightnessLabel.c_str(), brightnessValue, 3);
 #if DHT_EN
@@ -1188,10 +949,7 @@ void Webconfig()
   snprintf(dhtEnabledValue, sizeof(dhtEnabledValue), "%d", DHT_img_flag == 1 ? 1 : 0);
   WiFiManagerParameter custom_DHT11_en("DHT11_en", "Enable DHT11 sensor", dhtEnabledValue, 1);
 #endif
-  WiFiManagerParameter custom_weatertime("WeatherUpdateTime", "天气刷新时间（分钟）", intervalValue, 3);
   WiFiManagerParameter custom_cc("CityCode", "城市代码", cityValue, 9);
-  WiFiManagerParameter custom_codex_host("CodexBridge", "Codex桥接地址（IP:8766）", codexHostValue,
-                                         CODEX_HOST_BYTES - 1);
   WiFiManagerParameter p_lineBreak_notext("<p></p>");
 
   // wm.addParameter(&p_lineBreak_notext);
@@ -1200,10 +958,6 @@ void Webconfig()
   wm.addParameter(&custom_cc);
   wm.addParameter(&p_lineBreak_notext);
   wm.addParameter(&custom_bl);
-  wm.addParameter(&p_lineBreak_notext);
-  wm.addParameter(&custom_weatertime);
-  wm.addParameter(&p_lineBreak_notext);
-  wm.addParameter(&custom_codex_host);
   wm.addParameter(&p_lineBreak_notext);
   wm.addParameter(&custom_rot);
 #if DHT_EN
@@ -1325,9 +1079,6 @@ void saveParamCallback()
   int cc = 0;
   int newRotation = 0;
   int newBrightness = 0;
-  int newWeatherInterval = 0;
-  String newCodexHost = getParam("CodexBridge");
-  newCodexHost.trim();
 #if DHT_EN
   int newDhtEnabled = 0;
 #endif
@@ -1336,15 +1087,11 @@ void saveParamCallback()
   // mySerialPrintln("PARAM customfieldid = " + getParam("customfieldid"));
   // mySerialPrintln("PARAM CityCode = " + getParam("CityCode"));
   // mySerialPrintln("PARAM LCD BackLight = " + getParam("LCDBL"));
-  // mySerialPrintln("PARAM WeatherUpdateTime = " + getParam("WeatherUpdateTime"));
   // mySerialPrintln("PARAM Rotation = " + getParam("set_rotation"));
   // mySerialPrintln("PARAM DHT11_en = " + getParam("DHT11_en"));
   const bool valid = parseStrictInt(getParam("CityCode"), cc) && sdd::isValidCityCode(cc) &&
                      parseStrictInt(getParam("set_rotation"), newRotation) && sdd::isValidRotation(newRotation) &&
-                     parseStrictInt(getParam("LCDBL"), newBrightness) && sdd::isValidBrightness(newBrightness) &&
-                     parseStrictInt(getParam("WeatherUpdateTime"), newWeatherInterval) &&
-                         sdd::isValidWeatherInterval(newWeatherInterval) &&
-                     isValidCodexBridgeHost(newCodexHost)
+                     parseStrictInt(getParam("LCDBL"), newBrightness) && sdd::isValidBrightness(newBrightness)
 #if DHT_EN
                      && parseStrictInt(getParam("DHT11_en"), newDhtEnabled) &&
                          (newDhtEnabled == 0 || newDhtEnabled == 1)
@@ -1358,9 +1105,6 @@ void saveParamCallback()
 
   LCD_Rotation = newRotation;
   LCD_BL_PWM = newBrightness;
-  weatherUpdateIntervalMinutes = newWeatherInterval;
-  updateWeatherInterval();
-  stageCodexBridgeHost(newCodexHost);
 #if DHT_EN
   DHT_img_flag = newDhtEnabled;
 #endif
@@ -1405,11 +1149,6 @@ void saveParamCallback()
   Serial.printf("The brightness is adjusted to:");
   applyBacklight(LCD_BL_PWM);
   mySerialPrintln(LCD_BL_PWM);
-  // 天气更新时间
-  Serial.printf("Weather updates are rescheduled:");
-  mySerialPrintln(weatherUpdateIntervalMinutes);
-  EEPROM.write(WeatherInterval_addr, weatherUpdateIntervalMinutes);
-
 #if DHT_EN
   // 是否使用DHT11传感器
   Serial.printf("DHT11传感器：");
@@ -1546,18 +1285,13 @@ void sendAdminPage(const String &notice = "", bool error = false)
   page += F("% / ");
   page += String(appliedLCD_BL_PWM);
   page += F("%");
-  page += F("</span><span>Codex 剩余</span><span>");
-  page += codexUsage.valid ? String(codexUsage.remainingPercent) + "%" : "--";
   page += F("</span><span>访问地址</span><span>http://");
   page += adminHtmlEscape(adminHostname);
   page += F(".local/</span></div>");
 
   page += F("<form class='card' method='post' action='/save'><input type='hidden' name='token' value='");
   page += adminCsrfToken;
-  page += F("'><label for='codex'>Codex 桥接地址</label><input id='codex' name='codex' maxlength='63' value='");
-  page += adminHtmlEscape(String(codexBridgeHost));
-  page += F("' placeholder='192.168.1.10:8766'><small>留空可关闭 Codex 用量显示。</small>"
-            "<label for='city'>城市代码</label><input id='city' name='city' inputmode='numeric' maxlength='9' value='");
+  page += F("'><label for='city'>城市代码</label><input id='city' name='city' inputmode='numeric' maxlength='9' value='");
   page += String(storedCitySetting());
   page += F("'><small>填写 9 位 weather.com.cn 城市代码；0 表示自动识别。</small>"
             "<label for='brightness'>日间亮度（0–100）</label><input id='brightness' name='brightness' "
@@ -1570,10 +1304,7 @@ void sendAdminPage(const String &notice = "", bool error = false)
   page += F(":00 自动降至 ");
   page += String(NIGHT_DIM_BRIGHTNESS);
   page += F("%；更低的日间设置不会在夜间被调亮。</small>"
-            "<label for='interval'>网络刷新间隔（分钟）</label><input id='interval' name='interval' "
-            "type='number' min='1' max='60' value='");
-  page += String(weatherUpdateIntervalMinutes);
-  page += F("'><label for='rotation'>屏幕方向</label><select id='rotation' name='rotation'>");
+            "<label for='rotation'>屏幕方向</label><select id='rotation' name='rotation'>");
   const char *const rotationLabels[] = {"USB 接口朝下", "USB 接口朝右", "USB 接口朝上", "USB 接口朝左"};
   for (int rotation = 0; rotation < 4; rotation++)
   {
@@ -1607,20 +1338,14 @@ void handleAdminSave()
 
   int newCity = 0;
   int newBrightness = 0;
-  int newInterval = 0;
   int newRotation = 0;
-  String newCodexHost = adminServer.arg("codex");
-  newCodexHost.trim();
   const bool valid = adminServer.hasArg("city") && adminServer.hasArg("brightness") &&
-                     adminServer.hasArg("interval") && adminServer.hasArg("rotation") &&
+                     adminServer.hasArg("rotation") &&
                      parseStrictInt(adminServer.arg("city"), newCity) && sdd::isValidCityCode(newCity) &&
                      parseStrictInt(adminServer.arg("brightness"), newBrightness) &&
-                         sdd::isValidBrightness(newBrightness) &&
-                     parseStrictInt(adminServer.arg("interval"), newInterval) &&
-                         sdd::isValidWeatherInterval(newInterval) &&
+                          sdd::isValidBrightness(newBrightness) &&
                      parseStrictInt(adminServer.arg("rotation"), newRotation) &&
-                         sdd::isValidRotation(newRotation) &&
-                     isValidCodexBridgeHost(newCodexHost);
+                          sdd::isValidRotation(newRotation);
   if (!valid)
   {
     sendAdminPage(F("参数格式不正确，设置没有保存。"), true);
@@ -1628,7 +1353,6 @@ void handleAdminSave()
   }
 
   const bool rotationChanged = LCD_Rotation != newRotation;
-  const bool codexHostChanged = newCodexHost != String(codexBridgeHost);
   int cityBytes = newCity;
   for (int cnum = 0; cnum < 5; cnum++)
   {
@@ -1637,20 +1361,11 @@ void handleAdminSave()
   }
   EEPROM.write(BL_addr, newBrightness);
   EEPROM.write(Ro_addr, newRotation);
-  EEPROM.write(WeatherInterval_addr, newInterval);
-  stageCodexBridgeHost(newCodexHost);
   EEPROM.commit();
 
   cityCode = String(newCity);
-  weatherUpdateIntervalMinutes = newInterval;
-  updateWeatherInterval();
   applyBacklight(newBrightness);
   LCD_Rotation = newRotation;
-  if (codexHostChanged)
-  {
-    codexUsage = CodexUsageState();
-    updateCodexBanner();
-  }
   if (rotationChanged)
   {
     tft.setRotation(LCD_Rotation);
@@ -1659,8 +1374,8 @@ void handleAdminSave()
     digitalClockDisplay(1);
     reflashBanner();
     TJpgDec.drawJpg(15, 183, temperature, sizeof(temperature));
+    TJpgDec.drawJpg(15, 213, humidity, sizeof(humidity));
   }
-  drawCodexUsage();
   adminRefreshRequested = true;
   sendAdminPage(F("设置已保存，正在刷新网络数据。"));
 }
@@ -1693,11 +1408,7 @@ void handleAdminStatus()
   statusDoc["uptime_ms"] = millis();
   statusDoc["free_heap"] = ESP.getFreeHeap();
   statusDoc["city_code"] = cityCode;
-  statusDoc["refresh_minutes"] = weatherUpdateIntervalMinutes;
-  statusDoc["codex_bridge"] = codexBridgeHost;
-  statusDoc["codex_ready"] = codexUsage.valid;
-  if (codexUsage.valid)
-    statusDoc["codex_remaining_percent"] = codexUsage.remainingPercent;
+  statusDoc["network_policy"] = "startup/manual";
   String body;
   serializeJson(statusDoc, body);
   addAdminSecurityHeaders();
@@ -1908,334 +1619,14 @@ void getCityWeather()
   httpClient.end();
 }
 
-void markCodexUsageUnavailable(const String &message)
-{
-  mySerialPrint("Codex usage unavailable: ");
-  mySerialPrintln(message);
-  if (codexUsage.valid)
-    codexUsage.stale = true;
-  updateCodexBanner();
-  drawCodexUsage();
-}
 
-void getCodexUsage()
-{
-  if (strlen(codexBridgeHost) == 0)
-  {
-    codexUsage = CodexUsageState();
-    updateCodexBanner();
-    drawCodexUsage();
-    return;
-  }
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    markCodexUsageUnavailable("WiFi disconnected");
-    return;
-  }
-
-  String host = codexBridgeHost;
-  String URL = "http://" + host;
-  if (host.indexOf(':') < 0)
-    URL += ":" + String(CODEX_BRIDGE_DEFAULT_PORT);
-  URL += "/v1/codex-usage";
-
-  HTTPClient httpClient;
-  httpClient.begin(wificlient, URL);
-  httpClient.setTimeout(CODEX_BRIDGE_HTTP_TIMEOUT_MS);
-  const int httpCode = httpClient.GET();
-  if (httpCode != HTTP_CODE_OK)
-  {
-    httpClient.end();
-    markCodexUsageUnavailable("HTTP " + String(httpCode));
-    return;
-  }
-
-  const String body = httpClient.getString();
-  httpClient.end();
-  DynamicJsonDocument usageDoc(768);
-  if (deserializeJson(usageDoc, body))
-  {
-    markCodexUsageUnavailable("invalid JSON");
-    return;
-  }
-  JsonObjectConst root = usageDoc.as<JsonObjectConst>();
-  if (!root["ok"].is<bool>() || !root["ok"].as<bool>() ||
-      !root["used_percent"].is<int>())
-  {
-    markCodexUsageUnavailable("bridge has no current value");
-    return;
-  }
-
-  const int usedPercent = root["used_percent"].as<int>();
-  if (usedPercent < 0 || usedPercent > 100)
-  {
-    markCodexUsageUnavailable("percent out of range");
-    return;
-  }
-
-  CodexUsageState next;
-  next.valid = true;
-  next.remainingPercent = static_cast<uint8_t>(100 - usedPercent);
-  next.stale = root["stale"].is<bool>() && root["stale"].as<bool>();
-  if (root["reset_minutes"].is<unsigned long>())
-  {
-    next.resetMinutes = root["reset_minutes"].as<unsigned long>();
-    next.hasResetMinutes = true;
-  }
-  else if (root["reset_minutes"].is<int>() && root["reset_minutes"].as<int>() >= 0)
-  {
-    next.resetMinutes = static_cast<unsigned long>(root["reset_minutes"].as<int>());
-    next.hasResetMinutes = true;
-  }
-  codexUsage = next;
-  updateCodexBanner();
-  drawCodexUsage();
-  mySerialPrint("Codex remaining updated: ");
-  mySerialPrint(codexUsage.remainingPercent);
-  mySerialPrintln("%");
-}
-
-#if 0 // Legacy TianAPI lunar implementation retained only as migration reference.
-String HTTPS_request(String host, String url, String parameter = "", String fingerprint = "", int Port = 443, int Receive_cache = 1024)
-{
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    mySerialPrintln("HTTPS request skipped: WiFi disconnected");
-    return "0";
-  }
-
-  BearSSL::WiFiClientSecure client;
-  static BearSSL::X509List tianApiTrustAnchor(DIGICERT_GLOBAL_ROOT_G2);
-  const String configuredFingerprint = fingerprint.length() ? fingerprint : String(TIANAPI_TLS_FINGERPRINT);
-  if (configuredFingerprint.length())
-    client.setFingerprint(configuredFingerprint.c_str());
-  else
-  {
-    if (tianApiTrustAnchor.getCount() == 0)
-    {
-      mySerialPrintln("TianAPI TLS skipped: trust anchor allocation failed");
-      return "0";
-    }
-    if (timeStatus() == timeNotSet)
-    {
-      mySerialPrintln("TianAPI TLS skipped: certificate time is unavailable");
-      return "0";
-    }
-    client.setX509Time(now() - timeZone * SECS_PER_HOUR);
-    client.setTrustAnchors(&tianApiTrustAnchor);
-  }
-
-  client.setBufferSizes(Receive_cache, 512);
-  client.setTimeout(WEATHER_HTTP_TIMEOUT_MS);
-  if (parameter != "")
-    parameter = "?" + parameter;
-
-  const String fullUrl = "https://" + host + (Port == 443 ? "" : ":" + String(Port)) + url + parameter;
-  HTTPClient https;
-  https.setTimeout(WEATHER_HTTP_TIMEOUT_MS);
-  if (!https.begin(client, fullUrl))
-  {
-    mySerialPrintln("HTTPS request setup failed");
-    return "0";
-  }
-  https.setUserAgent("SmallDesktopDisplay/1.5.3");
-  const int httpCode = https.GET();
-  String body = "0";
-  if (httpCode == HTTP_CODE_OK)
-    body = https.getString();
-  else
-  {
-    mySerialPrint("HTTPS request failed, code=");
-    mySerialPrintln(httpCode);
-    mySerialPrint("HTTPS error: ");
-    mySerialPrintln(https.errorToString(httpCode).c_str());
-  }
-  https.end();
-  return body;
-}
-
-String TD_lunardate_year;
-String TD_lunardate_month;
-String TD_year;
-String TD_month;
-String TD_day;
-String TD_animal;
-String TD_lubarmonth;
-String TD_lunarday;
-String TD_zodiac[12] = {"鼠", "牛", "虎", "兔", "龙", "蛇",
-                        "马", "羊", "猴", "鸡", "狗", "猪"};
-String TD_Earthly_Branches[12] = {"子", "丑", "寅", "卯", "辰", "巳",
-                                  "午", "未", "申", "酉", "戌", "亥"};
-String TD_jieqi = "";
-// apis.tianapi.com 限流策略:
-// Calls are made by the network refresh cycle. This guard prevents duplicate
-// requests within one cycle and applies a bounded backoff after failures.
-unsigned long td_next_attempt_ms = 0;
-uint8_t td_consecutive_failures = 0;
-uint32_t lunarSnapshotRevision = 0;
-const unsigned long TD_SUCCESS_RETRY_MS = 30UL * 60UL * 1000UL;
-const unsigned long TD_FAIL_RETRY_BASE_MS = 60UL * 1000UL;
-
-void scheduleTianApiFailure(const char *reason)
-{
-  mySerialPrintln(reason);
-  if (td_consecutive_failures < 255)
-    td_consecutive_failures++;
-
-  // Back off for 1, 2, 4, 8, then 16 minutes. Network refreshes may be less
-  // frequent, but rapid manual refreshes must not hammer the upstream API.
-  const uint8_t failureIndex = td_consecutive_failures > 0 ? td_consecutive_failures - 1 : 0;
-  const uint8_t exponent = failureIndex < 4 ? failureIndex : 4;
-  td_next_attempt_ms = millis() + TD_FAIL_RETRY_BASE_MS * (1UL << exponent);
-}
-
-String full_zodiac(const String& zodiac){
-  for (int i = 0; i < 12; ++i){
-    if (zodiac == TD_zodiac[i]){
-      return TD_Earthly_Branches[i] + zodiac;
-    }
-  }
-  return zodiac;
-}
-void splitDate(const String& date, String& year, String& month, String& day) {
-    int firstDash = date.indexOf('-');
-    int secondDash = date.lastIndexOf('-');
-    if (firstDash <= 0 || secondDash <= firstDash + 1 || secondDash >= static_cast<int>(date.length()) - 1)
-    {
-      year = month = day = "";
-      return;
-    }
-    year = date.substring(0, firstDash);
-    month = date.substring(firstDash + 1, secondDash);
-    day = date.substring(secondDash + 1);
-}
-void getTD()
-{
-  if (!isValidTianApiKey(TD_key))
-    return;
-
-  unsigned long nowMs = millis();
-  if ((long)(nowMs - td_next_attempt_ms) < 0)
-    return;
-
-  // The current TianAPI certificate chain is about 4.3 KiB. A 5 KiB receive
-  // buffer avoids TLS record truncation while remaining practical on ESP8266.
-  String str = HTTPS_request("apis.tianapi.com", "/lunar/index", "key=" + TD_key,
-                             "", 443, 5120);
-  mySerialPrintln("Obtaining Heavenly Stems and Earthly Branches information");
-  if (str == "0" || str.length() == 0)
-  {
-    scheduleTianApiFailure("TianAPI request failed; preserving previous lunar display");
-    return;
-  }
-
-  DynamicJsonDocument doc(2048);
-  const DeserializationError jsonError = deserializeJson(doc, str);
-  if (jsonError)
-  {
-    mySerialPrint("Invalid TianAPI JSON: ");
-    mySerialPrintln(jsonError.c_str());
-    scheduleTianApiFailure("TianAPI JSON rejected; preserving previous lunar display");
-    return;
-  }
-
-  JsonObjectConst response = doc.as<JsonObjectConst>();
-  const int tdCode = response["code"] | -1;
-  JsonObjectConst result = response["result"].as<JsonObjectConst>();
-  if (tdCode != 200 || result.isNull())
-  {
-    mySerialPrint("TianAPI business error, code=");
-    mySerialPrintln(tdCode);
-    scheduleTianApiFailure("TianAPI result rejected; preserving previous lunar display");
-    return;
-  }
-
-  // Parse into temporary values. A partial response must never replace a
-  // complete, previously displayed lunar snapshot.
-  String nextGregorianDate;
-  String nextLunarDate;
-  String nextYear;
-  String nextMonth;
-  String nextDay;
-  String nextAnimal;
-  String nextLunarMonthName;
-  String nextLunarDayName;
-  String nextSolarTerm;
-  const bool fieldsValid =
-      readRequiredJsonString(result, "gregoriandate", nextGregorianDate) &&
-      readRequiredJsonString(result, "lunardate", nextLunarDate) &&
-      readRequiredJsonString(result, "tiangandizhiyear", nextYear) &&
-      readRequiredJsonString(result, "tiangandizhimonth", nextMonth) &&
-      readRequiredJsonString(result, "tiangandizhiday", nextDay) &&
-      readRequiredJsonString(result, "shengxiao", nextAnimal) &&
-      readRequiredJsonString(result, "lubarmonth", nextLunarMonthName) &&
-      readRequiredJsonString(result, "lunarday", nextLunarDayName) &&
-      readOptionalJsonText(result, "jieqi", nextSolarTerm);
-  if (!fieldsValid)
-  {
-    scheduleTianApiFailure("TianAPI response is incomplete; preserving previous lunar display");
-    return;
-  }
-
-  String nextLunarYear;
-  String nextLunarMonth;
-  String nextLunarDay;
-  if (!sdd::isValidApiDate(nextGregorianDate.c_str()) ||
-      !sdd::isValidApiDate(nextLunarDate.c_str()))
-  {
-    scheduleTianApiFailure("TianAPI dates are malformed; preserving previous lunar display");
-    return;
-  }
-  splitDate(nextLunarDate, nextLunarYear, nextLunarMonth, nextLunarDay);
-
-  TD_lunardate_year = nextLunarYear;
-  TD_lunardate_month = nextLunarMonth;
-  TD_year = nextYear;
-  TD_month = nextMonth;
-  TD_day = nextDay;
-  TD_animal = full_zodiac(nextAnimal);
-  TD_lubarmonth = nextLunarMonthName;
-  TD_lunarday = nextLunarDayName;
-  TD_jieqi = nextSolarTerm;
-  td_consecutive_failures = 0;
-  td_next_attempt_ms = millis() + TD_SUCCESS_RETRY_MS;
-  lunarSnapshotRevision++;
-  mySerialPrintln("TianAPI lunar snapshot updated");
-}
-#endif
-
-constexpr size_t WEATHER_BANNER_COUNT = 7;
+constexpr size_t WEATHER_BANNER_COUNT = 6;
 constexpr size_t CALENDAR_BANNER_COUNT = 1;
 String scrollText[WEATHER_BANNER_COUNT] = {"WEATHER WAIT"};
 String strTDDate[CALENDAR_BANNER_COUNT];
 size_t currentIndex = 0;
 int weatherBannerActiveIndex = -1;
 int weatherBannerOffset = 0;
-
-void updateCodexBanner()
-{
-  if (!codexUsage.valid)
-  {
-    scrollText[6] = strlen(codexBridgeHost) ? "Codex 剩余--" : "";
-    return;
-  }
-
-  String text = "Codex 剩余" + String(codexUsage.remainingPercent) + "%";
-  if (codexUsage.hasResetMinutes)
-  {
-    const sdd::CodexResetDisplay reset = sdd::codexResetDisplay(codexUsage.resetMinutes);
-    text += "，距离重置还有" + String(reset.value);
-    if (reset.unit == sdd::CodexResetUnit::Days)
-      text += "天";
-    else if (reset.unit == sdd::CodexResetUnit::Hours)
-      text += "小时";
-    else
-      text += "分钟";
-  }
-  if (codexUsage.stale)
-    text += " -";
-  scrollText[6] = text;
-}
 
 // 天气信息写到屏幕上
 bool weatherData(const String &cityDZ, const String &dataSK, const String &dataFC)
@@ -2253,6 +1644,7 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
   JsonObjectConst dz = cityDoc.as<JsonObjectConst>();
   JsonObjectConst fc = forecastDoc.as<JsonObjectConst>();
   String temperatureText;
+  String humidityText;
   String cityName;
   String liveWeather;
   String weatherCodeText;
@@ -2262,6 +1654,7 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
   String windDirection;
   String windStrength;
   float temperatureValue = 0.0f;
+  int relativeHumidity = 0;
   int weatherCode = 0;
   int forecastLow = 0;
   int forecastHigh = 0;
@@ -2275,6 +1668,9 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
       !sdd::parseStrictDecimal(temperatureText.c_str(), temperatureValue) ||
       !sdd::isValidTemperature(temperatureValue))
     return rejectWeatherField("temp");
+  if (!readRequiredJsonScalarText(sk, "SD", humidityText) ||
+      !parseHumidityText(humidityText, relativeHumidity))
+    return rejectWeatherField("SD");
   if (!readRequiredJsonString(sk, "cityname", cityName) &&
       !readRequiredJsonString(dz, "city", cityName))
     return rejectWeatherField("cityname/city");
@@ -2339,6 +1735,33 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
     tempnum = 50;
   }
   tempWin();
+
+  // 室外湿度
+  if (clk.createSprite(58, 24) == nullptr)
+  {
+    clk.unloadFont();
+    mySerialPrintln("Weather screen update skipped: sprite allocation failed");
+    return false;
+  }
+  clk.fillSprite(bgColor);
+  clk.setTextDatum(CC_DATUM);
+  clk.setTextColor(TFT_WHITE, bgColor);
+  clk.drawString(humidityText, 28, 13);
+  clk.pushSprite(100, 214);
+  clk.deleteSprite();
+  huminum = relativeHumidity;
+
+  if (huminum > 90)
+    humicol = 0x00FF;
+  else if (huminum > 70)
+    humicol = 0x0AFF;
+  else if (huminum > 40)
+    humicol = 0x0F0F;
+  else if (huminum > 20)
+    humicol = 0xFF0F;
+  else
+    humicol = 0xF00F;
+  humidityWin();
 
   // 城市名称
   if (clk.createSprite(70, 30) == nullptr)
@@ -2819,10 +2242,6 @@ void WIFI_reflash_All()
         getCityCode();
       else
         getCityWeather();
-      networkRefreshStage = NetworkRefreshStage::CodexUsage;
-      break;
-    case NetworkRefreshStage::CodexUsage:
-      getCodexUsage();
       networkRefreshStage = NetworkRefreshStage::Finish;
       break;
     case NetworkRefreshStage::Finish:
@@ -2897,7 +2316,6 @@ void setup()
   Button_sw1.setLongClickHandler(wifi_reset);
   Serial.begin(115200);
   EEPROM.begin(1024);
-  readCodexBridgeHost();
   // WiFi.forceSleepWake();
   // wm.resetSettings();    //在初始化中使wifi重置，需重新配置WiFi
 #if DHT_EN
@@ -2911,8 +2329,6 @@ void setup()
   // 从eeprom读取屏幕方向设置
   if (sdd::isValidRotation(EEPROM.read(Ro_addr)))
     LCD_Rotation = EEPROM.read(Ro_addr);
-  if (sdd::isValidWeatherInterval(EEPROM.read(WeatherInterval_addr)))
-    weatherUpdateIntervalMinutes = EEPROM.read(WeatherInterval_addr);
 
   pinMode(LCD_BL_PIN, OUTPUT);
   applyBacklight(LCD_BL_PWM);
@@ -2990,10 +2406,9 @@ void setup()
   tft.fillScreen(TFT_BLACK); // 清屏
 
   TJpgDec.drawJpg(15, 183, temperature, sizeof(temperature)); // 温度图标
-  drawCodexUsage();
+  TJpgDec.drawJpg(15, 213, humidity, sizeof(humidity));       // 湿度图标
 
   getCityWeather();
-  getCodexUsage();
 #if DHT_EN
   if (DHT_img_flag != 0)
     IndoorTem();
@@ -3009,9 +2424,6 @@ void setup()
 
   reflash_Banner.setInterval(2 * TMS); // 设置所需间隔 2秒
   reflash_Banner.onRun(reflashBanner);
-
-  updateWeatherInterval(); // 设置所需间隔 10分钟
-  reflash_openWifi.onRun(openWifi);
 
   reflash_Animate.setInterval(TMS / 10); // 设置帧率
   reflash_Animate.onRun(refresh_AnimatedImage);

@@ -47,6 +47,7 @@ enum class AnimationKind { None, Astronaut, Hutao, Miku };
 WeatherIcon weatherIconForCode(int weatherCode) noexcept;
 ByteSpan weatherIconAsset(WeatherIcon icon) noexcept;
 ByteSpan temperatureIconAsset() noexcept;
+ByteSpan humidityIconAsset() noexcept;
 const std::vector<ByteSpan>& animationFrames(AnimationKind kind) noexcept;
 
 const VlwFont& weatherFont() noexcept;

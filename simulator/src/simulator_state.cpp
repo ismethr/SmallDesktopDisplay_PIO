@@ -10,13 +10,16 @@ namespace {
 template <std::size_t Count>
 int nextNonEmptyIndex(const std::array<std::string, Count>& items,
                       std::size_t start) noexcept {
-  if (Count == 0) return -1;
-  start %= Count;
-  for (std::size_t offset = 0; offset < Count; ++offset) {
-    const std::size_t index = (start + offset) % Count;
-    if (!items[index].empty()) return static_cast<int>(index);
+  if constexpr (Count == 0) {
+    return -1;
+  } else {
+    start %= Count;
+    for (std::size_t offset = 0; offset < Count; ++offset) {
+      const std::size_t index = (start + offset) % Count;
+      if (!items[index].empty()) return static_cast<int>(index);
+    }
+    return -1;
   }
-  return -1;
 }
 
 template <std::size_t Count>

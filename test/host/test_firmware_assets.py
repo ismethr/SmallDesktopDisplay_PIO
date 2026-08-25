@@ -26,7 +26,7 @@ class FirmwareAssetTests(unittest.TestCase):
     def test_all_jpeg_assets_have_expected_frames_and_dimensions(self):
         source_root = REPOSITORY_ROOT / "src"
         paths = sorted((source_root / "weatherNum" / "img" / "tianqi").glob("*.h"))
-        paths += [source_root / "img" / "temperature.h"]
+        paths += [source_root / "img" / "temperature.h", source_root / "img" / "humidity.h"]
         paths += sorted((source_root / "Animate" / "img").glob("*.h"))
 
         dimensions = {}
@@ -55,8 +55,8 @@ class FirmwareAssetTests(unittest.TestCase):
                 dimensions[size] = dimensions.get(size, 0) + 1
                 frame_count += 1
 
-        self.assertEqual(70, frame_count)
-        self.assertEqual({(60, 60): 23, (24, 24): 1, (70, 70): 46}, dimensions)
+        self.assertEqual(71, frame_count)
+        self.assertEqual({(60, 60): 23, (24, 24): 2, (70, 70): 46}, dimensions)
 
     def test_array_only_decoder_core_is_pinned_and_has_no_file_api(self):
         decoder = REPOSITORY_ROOT / "lib" / "TJpg_Decoder_ArrayOnly"

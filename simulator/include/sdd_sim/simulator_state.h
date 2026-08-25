@@ -20,18 +20,12 @@ struct WeatherViewModel {
   std::string city = "上海";
   std::string temperatureText = "26";
   float temperatureCelsius = 26.0F;
+  std::string humidityText = "65%";
+  int relativeHumidity = 65;
   int aqi = 42;
   int weatherCode = 1;
-  std::array<std::string, 7> banners{{"天气 多云", "AQI 优 42", "风向 东南风3级",
-                                             "今日 多云", "最低温度 22℃", "最高温度 29℃",
-                                             "Codex 剩余58%，距离重置还有3天"}};
-};
-
-struct CodexUsageViewModel {
-  bool valid = true;
-  bool stale = false;
-  int remainingPercent = 58;
-  int resetMinutes = 3 * 24 * 60;
+  std::array<std::string, 6> banners{{"天气 多云", "AQI 优 42", "风向 东南风3级",
+                                             "今日 多云", "最低温度 22℃", "最高温度 29℃"}};
 };
 
 struct CalendarViewModel {
@@ -63,7 +57,6 @@ class SimulatorState {
  public:
   ClockViewModel clock;
   WeatherViewModel weather;
-  CodexUsageViewModel codex;
   CalendarViewModel calendar;
   IndoorViewModel indoor;
   DisplaySettings settings;

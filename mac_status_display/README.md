@@ -1,10 +1,10 @@
-# USB Mac 状态屏
+# USB 桌面状态屏（macOS / Windows）
 
-这是第二块 ESP8266 + 240 × 240 ST7789 屏幕使用的独立固件。它不连接 Wi-Fi，只通过 USB 串口接收 Mac 后台发送的数据，显示：
+这是第二块 ESP8266 + 240 × 240 ST7789 屏幕使用的独立固件。它不连接 Wi-Fi，只通过 USB 串口接收 macOS 或 Windows 后台发送的数据，显示：
 
 - CPU 使用率
 - 内存使用率
-- CPU 温度
+- ChatGPT/Codex 周剩余用量、进度条和陈旧状态
 - 当前默认上网接口的下载、上传速度
 - USB 在线/断线状态
 - 纯黑无填充卡片与中性灰虚线边界
@@ -18,7 +18,10 @@
 
 ```bash
 pio run -d mac_status_display -e esp12e
+# macOS
 pio run -d mac_status_display -e esp12e -t upload --upload-port /dev/cu.usbserial-2140
+# Windows（按设备管理器中的实际端口修改）
+pio run -d mac_status_display -e esp12e -t upload --upload-port COM7
 ```
 
 协议的本机测试：
@@ -27,6 +30,6 @@ pio run -d mac_status_display -e esp12e -t upload --upload-port /dev/cu.usbseria
 pio test -d mac_status_display -e native_test
 ```
 
-屏幕不保存账号、Wi-Fi 密码或 Codex 数据。串口帧经过 CRC16、长度、版本、字段数和范围检查；数据中断后保留最后一组数值、显示 `USB LOST` 并降低背光，重新连接后由统一后台按当前时段自动恢复。若同一根 USB 线也负责供电，物理拔线后设备会直接断电；离线亮度用于 Mac 睡眠、后台停止或串口数据中断但屏幕仍有供电的情况。
+屏幕不保存账号、Wi-Fi 密码或 Codex 数据，只接收统一桥接提供的剩余百分比和陈旧标志。串口帧经过 CRC16、长度、版本、字段数和范围检查；数据中断后保留最后一组数值、显示 `USB LOST` 并降低背光，重新连接后由统一后台按当前时段自动恢复。若同一根 USB 线也负责供电，物理拔线后设备会直接断电；离线亮度用于电脑睡眠、后台停止或串口数据中断但屏幕仍有供电的情况。
 
 刷机前请完整备份设备原来的 4 MB Flash，并记录备份的 SHA-256，以便需要时恢复。
