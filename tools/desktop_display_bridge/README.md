@@ -31,6 +31,36 @@ DESKTOP_BRIDGE_SERIAL_PORT=/dev/cu.usbserial-2140 \
 
 ## Windows 安装与运行
 
+### 单文件后台 EXE
+
+发布包中的 `SmallDesktopDisplayBridge.exe` 不需要 Python 环境。双击后没有控制台窗口，会自动发现唯一的 CH340/USB 串口并在后台运行；重复启动会提示已有实例。EXE 不包含 Codex 凭据，运行时只读取当前 Windows 用户的 `%USERPROFILE%\.codex\auth.json`。
+
+运行日志位于：
+
+```text
+%LOCALAPPDATA%\SmallDesktopDisplay\logs\bridge.log
+```
+
+可在浏览器打开 `http://127.0.0.1:8766/health` 检查状态。要停止后台程序，可在任务管理器结束 `SmallDesktopDisplayBridge.exe`，或执行：
+
+```powershell
+Get-Process SmallDesktopDisplayBridge -ErrorAction SilentlyContinue | Stop-Process
+```
+
+从源码构建单文件 EXE：
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r tools\desktop_display_bridge\requirements-build.txt
+.\tools\build_windows_bridge_exe.ps1 -Clean
+```
+
+产物位于 `build\windows_bridge_exe\dist\SmallDesktopDisplayBridge.exe`。GitHub Actions 也会生成 `SmallDesktopDisplayBridge-windows-x64` 构建产物。
+
+社区构建目前没有商业代码签名证书，Windows 首次运行时可能显示 SmartScreen 提示。请只使用本仓库源码或 GitHub Actions 生成的文件，并按构建日志中的 SHA-256 校验值核对；来源不明的同名 EXE 不应运行。
+
+### Python/命令行方式
+
 在 PowerShell 中从仓库根目录执行：
 
 ```powershell

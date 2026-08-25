@@ -101,6 +101,17 @@ pio device monitor -b 115200
 
 固件内的 JPEG 全部来自 `PROGMEM` 数组，因此项目固定使用 `lib/TJpg_Decoder_ArrayOnly`：Tiny JPEG 解码核心与上游 1.1.0 字节一致，只移除了从未使用的 LittleFS/SPIFFS/SD 文件接口。离线文件系统并不是本项目的固件功能。
 
+## Windows 系统状态桥接 EXE
+
+第二块 USB 系统状态屏可使用无控制台窗口的单文件 `SmallDesktopDisplayBridge.exe`。双击后自动在后台运行，日志写入 `%LOCALAPPDATA%\SmallDesktopDisplay\logs\bridge.log`；程序不打包或复制 Codex 凭据。构建命令：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r tools\desktop_display_bridge\requirements-build.txt
+.\tools\build_windows_bridge_exe.ps1 -Clean
+```
+
+本地产物位于 `build\windows_bridge_exe\dist`，GitHub Actions 产物名为 `SmallDesktopDisplayBridge-windows-x64`。配置、停止方式和 Python 运行方式见 [`tools/desktop_display_bridge/README.md`](tools/desktop_display_bridge/README.md)。
+
 ## Windows 原生界面模拟器
 
 仓库提供可交互的 Windows x64 原生模拟器，无需连接 ESP8266 即可预览天气屏。模拟器直接复用天气/温湿度 JPEG、三套动画、LineAtom 数字字模、VLW 中文字体以及 AQI/温湿度边界逻辑；右侧控制面板可调整温度、湿度和 AQI。
