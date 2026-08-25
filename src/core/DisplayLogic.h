@@ -70,8 +70,8 @@ inline bool parseDateNumber(const char* begin, const char* end, int& result) {
   return true;
 }
 
-// TianAPI documents Gregorian dates as YYYY-MM-DD and lunar dates without
-// leading zeroes (for example YYYY-M-D), so accept both representations.
+// Accept YYYY-MM-DD and compact YYYY-M-D responses while still rejecting
+// impossible calendar values.
 inline bool isValidApiDate(const char* value) {
   if (value == nullptr) {
     return false;

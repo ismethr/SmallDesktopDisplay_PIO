@@ -63,7 +63,7 @@ void test_decimal_temperature_parsing() {
   TEST_ASSERT_FALSE(sdd::isValidTemperature(value));
 }
 
-void test_tianapi_date_validation() {
+void test_api_date_validation() {
   TEST_ASSERT_TRUE(sdd::isValidApiDate("2024-02-29"));
   TEST_ASSERT_TRUE(sdd::isValidApiDate("2026-08-03"));
   TEST_ASSERT_TRUE(sdd::isValidApiDate("2026-8-3"));
@@ -133,7 +133,7 @@ int run_display_logic_tests() {
   RUN_TEST(test_persisted_setting_ranges);
   RUN_TEST(test_weather_value_ranges);
   RUN_TEST(test_decimal_temperature_parsing);
-  RUN_TEST(test_tianapi_date_validation);
+  RUN_TEST(test_api_date_validation);
   RUN_TEST(test_bar_widths_are_clamped);
   RUN_TEST(test_aqi_boundaries_follow_the_chinese_index);
   RUN_TEST(test_carousel_skips_empty_pages_and_wraps);
