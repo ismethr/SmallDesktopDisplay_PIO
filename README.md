@@ -114,7 +114,7 @@ pio device monitor -b 115200
 
 ## macOS 系统状态桥接 App
 
-第二块 USB 系统状态屏也提供无终端窗口、单实例和本地日志的 `SmallDesktopDisplayBridge.app`。它保持固件现有 `MSD3 + CRC16` 协议不变，自动发现 CH340 串口，采集 CPU、内存和默认网卡速度，并优先通过 Codex 官方 App Server 获取周剩余量。Intel 黑苹果使用 `macos-x86_64` 构建：
+第二块 USB 系统状态屏也提供无终端窗口、单实例和本地日志的 `SmallDesktopDisplayBridge.app`。它保持固件现有 `MSD3 + CRC16` 协议不变，自动发现 CH340 串口，采集 CPU、内存和默认网卡速度，并优先通过 Codex 官方 App Server 获取周剩余量。Intel 黑苹果使用 `macos-x86_64` 发布包，M 系列 Mac 使用原生 `macos-arm64` 发布包。Intel 本地构建示例：
 
 ```bash
 python3 -m venv .venv
@@ -122,7 +122,7 @@ python3 -m venv .venv
 MACOS_BRIDGE_ARCH=x86_64 ./tools/build_macos_bridge_app.sh
 ```
 
-本地构建产物与 GitHub Actions 的 `SmallDesktopDisplayBridge-macos-x86_64` 均包含可直接运行的 App。日志、登录启动与首次打开方式见 [`tools/desktop_display_bridge/README.md`](tools/desktop_display_bridge/README.md)。
+本地构建产物与 GitHub Actions 的 `SmallDesktopDisplayBridge-macos-x86_64`、`SmallDesktopDisplayBridge-macos-arm64` 均包含可直接运行的 App。日志、登录启动与首次打开方式见 [`tools/desktop_display_bridge/README.md`](tools/desktop_display_bridge/README.md)。
 
 ## Windows 原生界面模拟器
 

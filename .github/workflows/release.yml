@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  macos-bridge:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r tools/desktop_display_bridge/requirements-build.txt
+      - run: python -B tools/codex_usage_bridge/test_codex_usage_bridge.py -v
+      - run: python -B tools/desktop_display_bridge/test_desktop_display_bridge.py -v
+      - name: Build macOS bridge App
+        env:
+          PYTHON: ${{ env.pythonLocation }}/bin/python
+          MACOS_BRIDGE_ARCH: ${{ matrix.arch }}
+          BRIDGE_VERSION: ${{ github.ref_name }}
+        run: |
+          export BRIDGE_VERSION="${BRIDGE_VERSION#v}"
+          ./tools/build_macos_bridge_app.sh
+      - name: Upload macOS release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-SmallDesktopDisplayBridge-macos-${{ matrix.arch }}
+          path: build/macos_bridge_app/SmallDesktopDisplayBridge-macos-${{ matrix.arch }}.zip
+          if-no-files-found: error
+
+  windows-bridge:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r tools/desktop_display_bridge/requirements-build.txt
+      - run: python -B tools/codex_usage_bridge/test_codex_usage_bridge.py -v
+      - run: python -B tools/desktop_display_bridge/test_desktop_display_bridge.py -v
+      - name: Build Windows bridge EXE
+        shell: pwsh
+        run: .\tools\build_windows_bridge_exe.ps1 -Python (Get-Command python).Source -Clean
+      - name: Give Windows asset a platform-specific name
+        shell: pwsh
+        run: Copy-Item build\windows_bridge_exe\dist\SmallDesktopDisplayBridge.exe build\windows_bridge_exe\dist\SmallDesktopDisplayBridge-windows-x64.exe
+      - name: Upload Windows release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-SmallDesktopDisplayBridge-windows-x64
+          path: build/windows_bridge_exe/dist/SmallDesktopDisplayBridge-windows-x64.exe
+          if-no-files-found: error
+
+  publish:
+    needs:
+      - macos-bridge
+      - windows-bridge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes_file=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [[ -f "${notes_file}" ]]; then
+            gh release create "${GITHUB_REF_NAME}" dist/* --title "SmallDesktopDisplay ${GITHUB_REF_NAME}" --notes-file "${notes_file}"
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/* --title "SmallDesktopDisplay ${GITHUB_REF_NAME}" --generate-notes
+          fi

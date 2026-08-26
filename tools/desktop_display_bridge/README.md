@@ -18,7 +18,7 @@ CPU、内存和网卡计数统一由 [psutil](https://github.com/giampaolo/psuti
 
 ### 可双击的后台 App（推荐）
 
-GitHub Actions 产物 `SmallDesktopDisplayBridge-macos-x86_64` 中的 `SmallDesktopDisplayBridge.app` 不依赖系统 Python。解压后将它拖入“应用程序”，双击即可无窗口、无 Dock 图标地在后台运行；重复启动不会产生第二个实例。它会自动识别唯一的 CH340/USB 串口，包括本项目常见的 `/dev/cu.usbserial-*`。
+GitHub Release 提供两种不依赖系统 Python 的原生 App：Intel Mac/黑苹果使用 `SmallDesktopDisplayBridge-macos-x86_64.zip`，M1/M2/M3/M4 等 Apple Silicon Mac 使用 `SmallDesktopDisplayBridge-macos-arm64.zip`。解压后将 App 拖入“应用程序”，双击即可无窗口、无 Dock 图标地在后台运行；重复启动不会产生第二个实例。它会自动识别唯一的 CH340/USB 串口，包括本项目常见的 `/dev/cu.usbserial-*`。
 
 运行日志位于：
 
@@ -30,7 +30,7 @@ GitHub Actions 产物 `SmallDesktopDisplayBridge-macos-x86_64` 中的 `SmallDesk
 
 社区构建使用临时签名而非 Apple Developer ID。首次运行下载的发布包时，请在 Finder 中右键 App 并选择“打开”；不要运行来源不明的同名程序。
 
-黑苹果应使用 `macos-x86_64` 发布包。本机从源码构建会自动采用当前 Python 的架构；在 Intel/黑苹果上可显式指定 `x86_64`：
+Intel 黑苹果应使用 `macos-x86_64` 发布包。Apple Silicon 从源码构建可将下例的架构改为 `arm64`；本机默认会采用当前 Python 的架构：
 
 ```bash
 python3 -m venv .venv
@@ -82,7 +82,7 @@ py -3 -m venv .venv
 .\tools\build_windows_bridge_exe.ps1 -Clean
 ```
 
-产物位于 `build\windows_bridge_exe\dist\SmallDesktopDisplayBridge.exe`。GitHub Actions 也会生成 `SmallDesktopDisplayBridge-windows-x64` 构建产物。
+产物位于 `build\windows_bridge_exe\dist\SmallDesktopDisplayBridge.exe`。GitHub Release 直接提供同名 Windows x64 可执行文件，GitHub Actions 也会生成 `SmallDesktopDisplayBridge-windows-x64` 构建产物。
 
 社区构建目前没有商业代码签名证书，Windows 首次运行时可能显示 SmartScreen 提示。请只使用本仓库源码或 GitHub Actions 生成的文件，并按构建日志中的 SHA-256 校验值核对；来源不明的同名 EXE 不应运行。
 

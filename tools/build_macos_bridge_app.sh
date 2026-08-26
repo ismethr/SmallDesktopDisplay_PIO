@@ -12,6 +12,7 @@ spec_directory="${build_root}/spec"
 pyinstaller_config_directory="${build_root}/pyinstaller-config"
 python_command="${PYTHON:-${repository_root}/.venv/bin/python}"
 target_arch="${MACOS_BRIDGE_ARCH:-$(uname -m)}"
+release_version="${BRIDGE_VERSION:-1.8.0}"
 
 if [[ ! -x "${python_command}" ]]; then
   print -u2 "Python was not found: ${python_command}"
@@ -24,6 +25,10 @@ if [[ ! -f "${launcher}" ]]; then
 fi
 if [[ "${target_arch}" != "x86_64" && "${target_arch}" != "arm64" && "${target_arch}" != "universal2" ]]; then
   print -u2 "Unsupported MACOS_BRIDGE_ARCH: ${target_arch}"
+  exit 2
+fi
+if [[ ! "${release_version}" =~ '^[0-9]+([.][0-9]+){0,2}$' ]]; then
+  print -u2 "Unsupported BRIDGE_VERSION: ${release_version}"
   exit 2
 fi
 
@@ -63,6 +68,12 @@ if [[ ! -d "${app_path}" ]]; then
 fi
 
 info_plist="${app_path}/Contents/Info.plist"
+if ! /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${release_version}" "${info_plist}" 2>/dev/null; then
+  /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string ${release_version}" "${info_plist}"
+fi
+if ! /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${release_version}" "${info_plist}" 2>/dev/null; then
+  /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${release_version}" "${info_plist}"
+fi
 if ! /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "${info_plist}" 2>/dev/null; then
   /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "${info_plist}"
 fi
