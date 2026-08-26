@@ -140,6 +140,14 @@ constexpr int scheduledBrightness(int dayBrightness, int hour, bool timeIsValid,
              : dayBrightness;
 }
 
+// Unsigned subtraction keeps interval checks correct across the millis()
+// rollover that occurs roughly every 49 days on ESP8266.
+constexpr bool isRefreshIntervalElapsed(uint32_t nowMs, uint32_t lastRefreshMs,
+                                        uint32_t intervalMs) {
+  return intervalMs != 0 &&
+         static_cast<uint32_t>(nowMs - lastRefreshMs) >= intervalMs;
+}
+
 constexpr uint8_t temperatureBarWidth(int temperatureCelsius) {
   return temperatureCelsius <= -10
              ? 0

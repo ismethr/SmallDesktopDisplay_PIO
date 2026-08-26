@@ -27,6 +27,15 @@ void test_scheduled_brightness_supports_midnight_crossing_and_disable() {
   TEST_ASSERT_EQUAL_INT(50, sdd::scheduledBrightness(50, 0, true, 10, 0, 0));
 }
 
+void test_weather_refresh_interval_handles_boundary_and_millis_rollover() {
+  constexpr uint32_t interval = 30UL * 60UL * 1000UL;
+  TEST_ASSERT_FALSE(sdd::isRefreshIntervalElapsed(interval - 1, 0, interval));
+  TEST_ASSERT_TRUE(sdd::isRefreshIntervalElapsed(interval, 0, interval));
+  TEST_ASSERT_FALSE(sdd::isRefreshIntervalElapsed(100, 100, 0));
+  TEST_ASSERT_FALSE(sdd::isRefreshIntervalElapsed(999, UINT32_MAX - 1000, 2001));
+  TEST_ASSERT_TRUE(sdd::isRefreshIntervalElapsed(999, UINT32_MAX - 1000, 2000));
+}
+
 void test_persisted_setting_ranges() {
   TEST_ASSERT_TRUE(sdd::isValidRotation(0));
   TEST_ASSERT_TRUE(sdd::isValidRotation(3));
@@ -130,6 +139,7 @@ int run_display_logic_tests() {
   RUN_TEST(test_brightness_validation_and_pwm_mapping);
   RUN_TEST(test_scheduled_brightness_requires_valid_time);
   RUN_TEST(test_scheduled_brightness_supports_midnight_crossing_and_disable);
+  RUN_TEST(test_weather_refresh_interval_handles_boundary_and_millis_rollover);
   RUN_TEST(test_persisted_setting_ranges);
   RUN_TEST(test_weather_value_ranges);
   RUN_TEST(test_decimal_temperature_parsing);

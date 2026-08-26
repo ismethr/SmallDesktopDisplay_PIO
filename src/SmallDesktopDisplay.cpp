@@ -201,6 +201,7 @@ WiFiUDP Udp;
 WiFiClient wificlient;
 unsigned int localPort = 8000;
 unsigned long wifiWakeStartedAt = 0;
+uint32_t lastNetworkRefreshCompletedAt = 0;
 #if ADMIN_WEB_EN
 ESP8266WebServer adminServer(80);
 bool adminServerStarted = false;
@@ -620,7 +621,9 @@ void printDeviceStatus()
   mySerialPrint(":00 @ ");
   mySerialPrint(NIGHT_DIM_BRIGHTNESS);
   mySerialPrintln("%");
-  mySerialPrintln("Network policy: startup/manual refresh only");
+  mySerialPrint("Network policy: startup/every ");
+  mySerialPrint(WEATHER_REFRESH_INTERVAL_MINUTES);
+  mySerialPrintln(" minutes/manual refresh");
 #if ADMIN_WEB_EN
   mySerialPrint("LAN admin: ");
   if (WiFi.status() == WL_CONNECTED)
@@ -1408,7 +1411,8 @@ void handleAdminStatus()
   statusDoc["uptime_ms"] = millis();
   statusDoc["free_heap"] = ESP.getFreeHeap();
   statusDoc["city_code"] = cityCode;
-  statusDoc["network_policy"] = "startup/manual";
+  statusDoc["network_policy"] = "startup/periodic/manual";
+  statusDoc["refresh_interval_minutes"] = WEATHER_REFRESH_INTERVAL_MINUTES;
   String body;
   serializeJson(statusDoc, body);
   addAdminSecurityHeaders();
@@ -2282,6 +2286,7 @@ void openWifi()
 void closeWifi()
 {
   Udp.stop();
+  lastNetworkRefreshCompletedAt = millis();
 #if ADMIN_WEB_EN
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.setAutoReconnect(true);
@@ -2298,6 +2303,20 @@ void closeWifi()
   wifiWakeStartedAt = 0;
   networkRefreshStage = NetworkRefreshStage::Idle;
 #endif
+}
+
+void scheduleAutomaticWeatherRefresh()
+{
+  if (networkRefreshStage != NetworkRefreshStage::Idle ||
+      !sdd::isRefreshIntervalElapsed(
+          static_cast<uint32_t>(millis()), lastNetworkRefreshCompletedAt,
+          WEATHER_REFRESH_INTERVAL_MS))
+    return;
+
+  mySerialPrint("Automatic weather refresh after ");
+  mySerialPrint(WEATHER_REFRESH_INTERVAL_MINUTES);
+  mySerialPrintln(" minutes");
+  openWifi();
 }
 
 // 守护线程池
@@ -2455,6 +2474,7 @@ void loop()
 #endif
   // refresh_AnimatedImage(&TJpgDec); //更新右下角
   Supervisor_controller(); // 守护线程池（包含动画刷新）
+  scheduleAutomaticWeatherRefresh(); // 每 30 分钟临时联网刷新时间和天气
   WIFI_reflash_All();      // WIFI应用
   Serial_set();            // 串口响应
   Button_sw1.loop();       // 按钮轮询

@@ -37,6 +37,13 @@
 #define WIFI_CONNECT_TIMEOUT_MS 15000UL
 #define CONFIG_PORTAL_TIMEOUT_SECONDS 180
 #define WEATHER_HTTP_TIMEOUT_MS 10000
+#ifndef WEATHER_REFRESH_INTERVAL_MINUTES
+#define WEATHER_REFRESH_INTERVAL_MINUTES 30
+#endif
+#if WEATHER_REFRESH_INTERVAL_MINUTES < 1 || WEATHER_REFRESH_INTERVAL_MINUTES > 1440
+#error "WEATHER_REFRESH_INTERVAL_MINUTES must be between 1 and 1440"
+#endif
+#define WEATHER_REFRESH_INTERVAL_MS (WEATHER_REFRESH_INTERVAL_MINUTES * 60UL * 1000UL)
 
 // Backlight schedule. The saved/user-selected value remains the daytime
 // brightness. A valid NTP time is required before night dimming is applied.
