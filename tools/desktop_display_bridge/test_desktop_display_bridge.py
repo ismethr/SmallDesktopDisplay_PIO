@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +8,11 @@ from types import SimpleNamespace
 from unittest import mock
 
 import desktop_display_bridge as bridge
-import macos_bridge_launcher
+
+if os.name != "nt":
+    import macos_bridge_launcher
+else:  # pragma: no cover - the macOS launcher imports fcntl
+    macos_bridge_launcher = None  # type: ignore[assignment]
 
 
 class Counter:
@@ -167,6 +172,8 @@ class DesktopDisplayBridgeTests(unittest.TestCase):
         self.assertNotIn("/dev/", str(payload))
 
     def test_macos_launcher_uses_standard_user_directories(self) -> None:
+        if macos_bridge_launcher is None:
+            self.skipTest("macOS launcher is not importable on Windows")
         with mock.patch.object(Path, "home", return_value=Path("/Users/tester")):
             self.assertEqual(
                 Path("/Users/tester/Library/Application Support/SmallDesktopDisplay"),
@@ -178,6 +185,8 @@ class DesktopDisplayBridgeTests(unittest.TestCase):
             )
 
     def test_macos_launcher_lock_rejects_second_instance(self) -> None:
+        if macos_bridge_launcher is None:
+            self.skipTest("macOS launcher is not importable on Windows")
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             macos_bridge_launcher,
             "application_support_directory",
