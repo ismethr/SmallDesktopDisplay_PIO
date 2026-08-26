@@ -558,6 +558,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=int(os.getenv("CODEX_BRIDGE_REFRESH_SECONDS", str(codex.DEFAULT_REFRESH_SECONDS))),
     )
     parser.add_argument("--timeout", type=float, default=codex.DEFAULT_TIMEOUT_SECONDS)
+    parser.add_argument(
+        "--codex-source",
+        choices=codex.CODEX_SOURCE_CHOICES,
+        default=os.getenv("CODEX_BRIDGE_SOURCE", codex.CODEX_SOURCE_AUTO),
+        help="Codex quota source: official app server, legacy credential request, or automatic",
+    )
+    parser.add_argument(
+        "--codex-binary",
+        type=Path,
+        default=Path(os.environ["CODEX_BRIDGE_CODEX_BINARY"])
+        if os.getenv("CODEX_BRIDGE_CODEX_BINARY")
+        else None,
+    )
     parser.add_argument("--serial-port", default=os.getenv("DESKTOP_BRIDGE_SERIAL_PORT") or None)
     parser.add_argument(
         "--network-interface",
@@ -644,6 +657,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.upstream_url,
                 args.refresh_seconds,
                 args.timeout,
+                args.codex_source,
+                args.codex_binary,
             ),
             name="codex-usage-refresh",
             daemon=True,

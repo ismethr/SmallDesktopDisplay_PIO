@@ -12,9 +12,36 @@ CPU、内存和网卡计数统一由 [psutil](https://github.com/giampaolo/psuti
 | --- | --- | --- |
 | 默认网卡 | 系统默认路由接口 | 系统路由探测，必要时回退到 `Get-NetRoute` |
 | 串口 | `/dev/cu.usbserial-*` 等 USB 串口 | `COM` 口及 USB VID/描述识别 |
-| Codex 用量 | 读取本机 Codex 登录状态 | 读取本机 Codex 登录状态 |
+| Codex 用量 | 优先调用 ChatGPT/Codex 自带的本机 App Server | 优先调用 Codex 自带的本机 App Server |
 
 ## macOS 安装与运行
+
+### 可双击的后台 App（推荐）
+
+GitHub Actions 产物 `SmallDesktopDisplayBridge-macos-x86_64` 中的 `SmallDesktopDisplayBridge.app` 不依赖系统 Python。解压后将它拖入“应用程序”，双击即可在后台运行；重复启动不会产生第二个实例。它会自动识别唯一的 CH340/USB 串口，包括本项目常见的 `/dev/cu.usbserial-*`。
+
+运行日志位于：
+
+```text
+~/Library/Logs/SmallDesktopDisplay/bridge.log
+```
+
+可在浏览器打开 `http://127.0.0.1:8766/health` 检查 USB、硬件采集与 Codex 用量状态。要开机自动运行，可在“系统设置 → 通用 → 登录项”中添加 `SmallDesktopDisplayBridge.app`；要停止可在“活动监视器”结束同名进程。
+
+社区构建使用临时签名而非 Apple Developer ID。首次运行下载的发布包时，请在 Finder 中右键 App 并选择“打开”；不要运行来源不明的同名程序。
+
+黑苹果应使用 `macos-x86_64` 发布包。本机从源码构建会自动采用当前 Python 的架构；在 Intel/黑苹果上可显式指定 `x86_64`：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r tools/desktop_display_bridge/requirements-build.txt
+MACOS_BRIDGE_ARCH=x86_64 ./tools/build_macos_bridge_app.sh
+open build/macos_bridge_app/dist/SmallDesktopDisplayBridge.app
+```
+
+构建结果同时包含可直接运行的 `.app` 和便于传输的 ZIP，位于 `build/macos_bridge_app/`。
+
+### Python/命令行方式
 
 ```bash
 python3 -m venv .venv
@@ -85,6 +112,8 @@ USB 状态屏不需要入站网络访问，建议使用 `--listen-host 127.0.0.1
 可用环境变量：
 
 - `CODEX_BRIDGE_HOST`、`CODEX_BRIDGE_PORT`、`CODEX_BRIDGE_REFRESH_SECONDS`：与原 Codex 桥接相同。
+- `CODEX_BRIDGE_SOURCE`：`auto`（默认）、`app-server` 或 `legacy`。`auto` 优先使用官方本机 App Server，仅在不可用时兼容旧版凭据请求。
+- `CODEX_BRIDGE_CODEX_BINARY`：可选的 Codex 可执行文件路径；macOS 会自动发现 `/Applications/ChatGPT.app/Contents/Resources/codex`。
 - `DESKTOP_BRIDGE_SERIAL_PORT`：状态屏固定串口；例如 macOS 的 `/dev/cu.usbserial-2140` 或 Windows 的 `COM7`。
 - `DESKTOP_BRIDGE_NETWORK_INTERFACE`：可选网卡名；留空时跟随系统默认路由。
 - `DESKTOP_BRIDGE_NIGHT_START_HOUR`、`DESKTOP_BRIDGE_NIGHT_END_HOUR`：夜间节能开始和结束小时，默认 `0` 和 `7`；两者相同表示关闭定时节能。
@@ -100,7 +129,7 @@ USB 状态屏不需要入站网络访问，建议使用 `--listen-host 127.0.0.1
 - `/v1/mac-status`：保留的旧版兼容路径，内容与 `/v1/desktop-status` 相同。
 - `/v1/codex-usage`：本机 Codex 用量诊断接口。
 
-这些 HTTP 接口没有账号认证，只适合可信家庭局域网。Codex OAuth 令牌只会由原桥接模块发送至经过 TLS 验证的 `chatgpt.com`，不会进入 USB 数据帧或日志。
+这些 HTTP 接口没有账号认证，只适合可信家庭局域网。默认情况下桥接通过 Codex 官方 App Server 获取限额，不读取 OAuth 令牌；兼容旧版客户端的 `legacy` 回退也只会把令牌发送至经过 TLS 验证的 `chatgpt.com`。凭据不会进入 USB 数据帧、App 包或日志。
 
 ## USB 协议
 

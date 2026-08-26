@@ -112,6 +112,18 @@ pio device monitor -b 115200
 
 本地产物位于 `build\windows_bridge_exe\dist`，GitHub Actions 产物名为 `SmallDesktopDisplayBridge-windows-x64`。配置、停止方式和 Python 运行方式见 [`tools/desktop_display_bridge/README.md`](tools/desktop_display_bridge/README.md)。
 
+## macOS 系统状态桥接 App
+
+第二块 USB 系统状态屏也提供无终端窗口、单实例和本地日志的 `SmallDesktopDisplayBridge.app`。它保持固件现有 `MSD3 + CRC16` 协议不变，自动发现 CH340 串口，采集 CPU、内存和默认网卡速度，并优先通过 Codex 官方 App Server 获取周剩余量。Intel 黑苹果使用 `macos-x86_64` 构建：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r tools/desktop_display_bridge/requirements-build.txt
+MACOS_BRIDGE_ARCH=x86_64 ./tools/build_macos_bridge_app.sh
+```
+
+本地构建产物与 GitHub Actions 的 `SmallDesktopDisplayBridge-macos-x86_64` 均包含可直接运行的 App。日志、登录启动与首次打开方式见 [`tools/desktop_display_bridge/README.md`](tools/desktop_display_bridge/README.md)。
+
 ## Windows 原生界面模拟器
 
 仓库提供可交互的 Windows x64 原生模拟器，无需连接 ESP8266 即可预览天气屏。模拟器直接复用天气/温湿度 JPEG、三套动画、LineAtom 数字字模、VLW 中文字体以及 AQI/温湿度边界逻辑；右侧控制面板可调整温度、湿度和 AQI。

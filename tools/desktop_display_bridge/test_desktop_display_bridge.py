@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import desktop_display_bridge as bridge
+import macos_bridge_launcher
 
 
 class Counter:
@@ -164,6 +165,30 @@ class DesktopDisplayBridgeTests(unittest.TestCase):
         payload = bridge.UsbSnapshot(connected=True, port="/dev/cu.usbserial-2140").as_public_dict()
         self.assertEqual("cu.usbserial-2140", payload["port"])
         self.assertNotIn("/dev/", str(payload))
+
+    def test_macos_launcher_uses_standard_user_directories(self) -> None:
+        with mock.patch.object(Path, "home", return_value=Path("/Users/tester")):
+            self.assertEqual(
+                Path("/Users/tester/Library/Application Support/SmallDesktopDisplay"),
+                macos_bridge_launcher.application_support_directory(),
+            )
+            self.assertEqual(
+                Path("/Users/tester/Library/Logs/SmallDesktopDisplay"),
+                macos_bridge_launcher.log_directory(),
+            )
+
+    def test_macos_launcher_lock_rejects_second_instance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            macos_bridge_launcher,
+            "application_support_directory",
+            return_value=Path(directory),
+        ):
+            first, first_acquired = macos_bridge_launcher.acquire_single_instance_lock()
+            second, second_acquired = macos_bridge_launcher.acquire_single_instance_lock()
+            self.assertTrue(first_acquired)
+            self.assertFalse(second_acquired)
+            self.assertTrue(second.closed)
+            first.close()
 
 
 if __name__ == "__main__":

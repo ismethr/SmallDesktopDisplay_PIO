@@ -104,6 +104,92 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(72, snapshot.remaining_percent)
         self.assertEqual(7 * 86400, snapshot.window_seconds)
 
+    def test_parse_official_app_server_rate_limits_prefers_weekly_window(self) -> None:
+        snapshot = bridge.parse_app_server_rate_limits(
+            {
+                "rateLimits": {
+                    "limitId": "codex",
+                    "primary": {
+                        "usedPercent": 15,
+                        "windowDurationMins": 300,
+                        "resetsAt": 2_000,
+                    },
+                    "secondary": {
+                        "usedPercent": 38,
+                        "windowDurationMins": 10_080,
+                        "resetsAt": 8_200,
+                    },
+                }
+            },
+            now=1_000,
+        )
+        self.assertEqual(38, snapshot.used_percent)
+        self.assertEqual(62, snapshot.remaining_percent)
+        self.assertEqual(7 * 86400, snapshot.window_seconds)
+        self.assertEqual(120, snapshot.reset_minutes)
+
+    def test_parse_official_app_server_multi_bucket_shape(self) -> None:
+        snapshot = bridge.parse_app_server_rate_limits(
+            {
+                "rateLimitsByLimitId": {
+                    "codex": {
+                        "primary": {
+                            "usedPercent": 20,
+                            "windowDurationMins": 300,
+                            "resetsAt": 2_000,
+                        },
+                        "secondary": {
+                            "usedPercent": 45,
+                            "windowDurationMins": 10_080,
+                            "resetsAt": 9_000,
+                        },
+                    }
+                }
+            },
+            now=1_000,
+        )
+        self.assertEqual(55, snapshot.remaining_percent)
+
+    def test_preferred_source_uses_official_app_server(self) -> None:
+        expected = bridge.UsageSnapshot(valid=True, used_percent=12, remaining_percent=88)
+        binary = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+        with mock.patch.object(bridge, "find_codex_binary", return_value=binary), mock.patch.object(
+            bridge,
+            "fetch_usage_from_app_server",
+            return_value=expected,
+        ) as app_server, mock.patch.object(bridge, "fetch_usage") as legacy:
+            actual = bridge.fetch_usage_preferred(Path("unused"))
+        self.assertEqual(expected, actual)
+        app_server.assert_called_once_with(binary, bridge.DEFAULT_TIMEOUT_SECONDS)
+        legacy.assert_not_called()
+
+    def test_auto_source_falls_back_when_app_server_is_unavailable(self) -> None:
+        expected = bridge.UsageSnapshot(valid=True, used_percent=22, remaining_percent=78)
+        with mock.patch.object(
+            bridge,
+            "find_codex_binary",
+            return_value=Path("/codex"),
+        ), mock.patch.object(
+            bridge,
+            "fetch_usage_from_app_server",
+            side_effect=bridge.BridgeError("not available"),
+        ), mock.patch.object(bridge, "fetch_usage", return_value=expected) as legacy:
+            actual = bridge.fetch_usage_preferred(Path("auth.json"))
+        self.assertEqual(expected, actual)
+        legacy.assert_called_once()
+
+    def test_app_server_source_does_not_fall_back_to_credentials(self) -> None:
+        with mock.patch.object(bridge, "find_codex_binary", return_value=None), mock.patch.object(
+            bridge,
+            "fetch_usage",
+        ) as legacy:
+            with self.assertRaises(bridge.BridgeError):
+                bridge.fetch_usage_preferred(
+                    Path("auth.json"),
+                    source=bridge.CODEX_SOURCE_APP_SERVER,
+                )
+        legacy.assert_not_called()
+
     def test_fetch_sends_token_and_returns_sanitized_snapshot(self) -> None:
         response_body = json.dumps(
             {

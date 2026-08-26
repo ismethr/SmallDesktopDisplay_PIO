@@ -14,7 +14,10 @@ import base64
 import json
 import math
 import os
+import queue
+import shutil
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -36,10 +39,21 @@ DEFAULT_LISTEN_PORT = 8766
 DEFAULT_REFRESH_SECONDS = 60
 DEFAULT_TIMEOUT_SECONDS = 20
 USER_AGENT = "SmallDesktopDisplay-CodexBridge/1.0"
+APP_SERVER_CLIENT_NAME = "small_desktop_display_bridge"
+APP_SERVER_CLIENT_TITLE = "SmallDesktopDisplay Bridge"
+APP_SERVER_CLIENT_VERSION = "1.1.0"
 TRUSTED_UPSTREAM_HOSTS = {"chatgpt.com"}
 LOOPBACK_UPSTREAM_HOSTS = {"localhost", "127.0.0.1", "::1"}
 WEEKLY_WINDOW_MIN_SECONDS = 6 * 86400
 WEEKLY_WINDOW_MAX_SECONDS = 8 * 86400
+CODEX_SOURCE_AUTO = "auto"
+CODEX_SOURCE_APP_SERVER = "app-server"
+CODEX_SOURCE_LEGACY = "legacy"
+CODEX_SOURCE_CHOICES = (
+    CODEX_SOURCE_AUTO,
+    CODEX_SOURCE_APP_SERVER,
+    CODEX_SOURCE_LEGACY,
+)
 
 
 class BridgeError(RuntimeError):
@@ -239,6 +253,212 @@ def parse_usage_response(payload: Mapping[str, Any], now: float | None = None) -
     )
 
 
+def parse_app_server_rate_limits(
+    payload: Mapping[str, Any],
+    now: float | None = None,
+) -> UsageSnapshot:
+    """Convert the official Codex app-server rate-limit response to a weekly snapshot."""
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[int, int, int | None]] = set()
+
+    def add_window(candidate: Any) -> None:
+        if not isinstance(candidate, dict):
+            return
+        duration_minutes = candidate.get("windowDurationMins")
+        used_percent = candidate.get("usedPercent")
+        if duration_minutes is None or used_percent is None:
+            return
+        seconds = int(_number(duration_minutes, "windowDurationMins") * 60)
+        used = int(round(_number(used_percent, "usedPercent")))
+        reset_value = candidate.get("resetsAt")
+        reset_at = None if reset_value is None else int(_number(reset_value, "resetsAt"))
+        identity = (seconds, used, reset_at)
+        if seconds <= 0 or identity in seen:
+            return
+        seen.add(identity)
+        normalized.append(
+            {
+                "limit_window_seconds": seconds,
+                "used_percent": used,
+                "reset_at": reset_at,
+            }
+        )
+
+    buckets = payload.get("rateLimitsByLimitId")
+    if isinstance(buckets, dict):
+        for bucket in buckets.values():
+            if isinstance(bucket, dict):
+                add_window(bucket.get("primary"))
+                add_window(bucket.get("secondary"))
+
+    legacy_bucket = payload.get("rateLimits")
+    if isinstance(legacy_bucket, dict):
+        add_window(legacy_bucket.get("primary"))
+        add_window(legacy_bucket.get("secondary"))
+
+    if not normalized:
+        raise BridgeError("Codex app server returned no usable rate-limit window")
+    return parse_usage_response({"rate_limits": normalized}, now=now)
+
+
+def find_codex_binary(override: Path | None = None) -> Path | None:
+    """Locate the Codex binary without reading or copying its credentials."""
+    if override is not None:
+        candidate = override.expanduser()
+        return candidate if candidate.is_file() else None
+
+    configured = os.getenv("CODEX_BRIDGE_CODEX_BINARY")
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file():
+            return candidate
+
+    on_path = shutil.which("codex")
+    if on_path:
+        return Path(on_path)
+
+    candidates = (
+        Path("/Applications/ChatGPT.app/Contents/Resources/codex"),
+        Path.home() / "Applications/ChatGPT.app/Contents/Resources/codex",
+    )
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
+
+
+def _app_server_process_options() -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "stdin": subprocess.PIPE,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.DEVNULL,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "bufsize": 1,
+    }
+    if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+        options["creationflags"] = subprocess.CREATE_NO_WINDOW
+    return options
+
+
+def fetch_usage_from_app_server(
+    codex_binary: Path,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> UsageSnapshot:
+    """Read ChatGPT/Codex quota through the documented local app-server protocol."""
+    try:
+        process = subprocess.Popen(
+            [str(codex_binary), "app-server"],
+            **_app_server_process_options(),
+        )
+    except OSError as exc:
+        raise BridgeError("Cannot start the Codex app server") from exc
+
+    assert process.stdin is not None
+    assert process.stdout is not None
+    messages: queue.Queue[str | None] = queue.Queue()
+
+    def read_messages() -> None:
+        try:
+            for line in process.stdout:
+                messages.put(line)
+        finally:
+            messages.put(None)
+
+    reader = threading.Thread(target=read_messages, name="codex-app-server-reader", daemon=True)
+    reader.start()
+    deadline = time.monotonic() + timeout
+
+    def send(message: Mapping[str, Any]) -> None:
+        try:
+            process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
+            process.stdin.flush()
+        except (BrokenPipeError, OSError) as exc:
+            raise BridgeError("Codex app server closed its input") from exc
+
+    def wait_for(request_id: int) -> Mapping[str, Any]:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise BridgeError("Codex app server timed out")
+            try:
+                line = messages.get(timeout=remaining)
+            except queue.Empty as exc:
+                raise BridgeError("Codex app server timed out") from exc
+            if line is None:
+                raise BridgeError("Codex app server exited before replying")
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(message, dict) or message.get("id") != request_id:
+                continue
+            error = message.get("error")
+            if isinstance(error, dict):
+                detail = error.get("message")
+                if isinstance(detail, str) and detail:
+                    raise BridgeError(f"Codex app server: {detail}")
+                raise BridgeError("Codex app server returned an error")
+            result = message.get("result")
+            if not isinstance(result, dict):
+                raise BridgeError("Codex app server returned an invalid response")
+            return result
+
+    try:
+        send(
+            {
+                "method": "initialize",
+                "id": 1,
+                "params": {
+                    "clientInfo": {
+                        "name": APP_SERVER_CLIENT_NAME,
+                        "title": APP_SERVER_CLIENT_TITLE,
+                        "version": APP_SERVER_CLIENT_VERSION,
+                    }
+                },
+            }
+        )
+        wait_for(1)
+        send({"method": "initialized", "params": {}})
+        send({"method": "account/rateLimits/read", "id": 2})
+        return parse_app_server_rate_limits(wait_for(2))
+    finally:
+        try:
+            process.stdin.close()
+        except OSError:
+            pass
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1)
+
+
+def fetch_usage_preferred(
+    auth_file: Path,
+    upstream_url: str = DEFAULT_UPSTREAM_URL,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    source: str = CODEX_SOURCE_AUTO,
+    codex_binary: Path | None = None,
+) -> UsageSnapshot:
+    """Use the official app server first, with the old direct request as an auto fallback."""
+    if source not in CODEX_SOURCE_CHOICES:
+        raise BridgeError(f"Unknown Codex usage source: {source}")
+
+    if source != CODEX_SOURCE_LEGACY:
+        resolved_binary = find_codex_binary(codex_binary)
+        if resolved_binary is not None:
+            try:
+                return fetch_usage_from_app_server(resolved_binary, timeout)
+            except BridgeError:
+                if source == CODEX_SOURCE_APP_SERVER:
+                    raise
+        elif source == CODEX_SOURCE_APP_SERVER:
+            raise BridgeError("Codex executable not found; install or sign in to ChatGPT/Codex")
+
+    return fetch_usage(auth_file, upstream_url, timeout)
+
+
 def fetch_usage(
     auth_file: Path,
     upstream_url: str = DEFAULT_UPSTREAM_URL,
@@ -325,10 +545,20 @@ def refresh_loop(
     upstream_url: str,
     refresh_seconds: int,
     timeout: float,
+    source: str = CODEX_SOURCE_AUTO,
+    codex_binary: Path | None = None,
 ) -> None:
     while not stop_event.is_set():
         try:
-            state.set_success(fetch_usage(auth_file, upstream_url, timeout))
+            state.set_success(
+                fetch_usage_preferred(
+                    auth_file,
+                    upstream_url,
+                    timeout,
+                    source,
+                    codex_binary,
+                )
+            )
         except BridgeError as exc:
             state.set_error(str(exc))
             print(f"[codex-bridge] {exc}", file=sys.stderr, flush=True)
@@ -383,6 +613,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=int(os.getenv("CODEX_BRIDGE_REFRESH_SECONDS", str(DEFAULT_REFRESH_SECONDS))),
     )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
+    parser.add_argument(
+        "--codex-source",
+        choices=CODEX_SOURCE_CHOICES,
+        default=os.getenv("CODEX_BRIDGE_SOURCE", CODEX_SOURCE_AUTO),
+        help="Codex quota source: official app server, legacy credential request, or automatic",
+    )
+    parser.add_argument(
+        "--codex-binary",
+        type=Path,
+        default=Path(os.environ["CODEX_BRIDGE_CODEX_BINARY"])
+        if os.getenv("CODEX_BRIDGE_CODEX_BINARY")
+        else None,
+    )
     parser.add_argument("--once", action="store_true", help="fetch once and print safe JSON")
     return parser
 
@@ -399,7 +642,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.once:
         try:
-            snapshot = fetch_usage(args.auth_file, args.upstream_url, args.timeout)
+            snapshot = fetch_usage_preferred(
+                args.auth_file,
+                args.upstream_url,
+                args.timeout,
+                args.codex_source,
+                args.codex_binary,
+            )
         except BridgeError as exc:
             print(json.dumps(UsageSnapshot(error=str(exc)).as_dict(), separators=(",", ":")))
             return 1
@@ -417,6 +666,8 @@ def main(argv: list[str] | None = None) -> int:
             args.upstream_url,
             args.refresh_seconds,
             args.timeout,
+            args.codex_source,
+            args.codex_binary,
         ),
         name="codex-usage-refresh",
         daemon=True,
