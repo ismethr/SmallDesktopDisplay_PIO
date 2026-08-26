@@ -18,7 +18,7 @@ CPU、内存和网卡计数统一由 [psutil](https://github.com/giampaolo/psuti
 
 ### 可双击的后台 App（推荐）
 
-GitHub Actions 产物 `SmallDesktopDisplayBridge-macos-x86_64` 中的 `SmallDesktopDisplayBridge.app` 不依赖系统 Python。解压后将它拖入“应用程序”，双击即可在后台运行；重复启动不会产生第二个实例。它会自动识别唯一的 CH340/USB 串口，包括本项目常见的 `/dev/cu.usbserial-*`。
+GitHub Actions 产物 `SmallDesktopDisplayBridge-macos-x86_64` 中的 `SmallDesktopDisplayBridge.app` 不依赖系统 Python。解压后将它拖入“应用程序”，双击即可无窗口、无 Dock 图标地在后台运行；重复启动不会产生第二个实例。它会自动识别唯一的 CH340/USB 串口，包括本项目常见的 `/dev/cu.usbserial-*`。
 
 运行日志位于：
 

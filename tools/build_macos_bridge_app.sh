@@ -62,6 +62,15 @@ if [[ ! -d "${app_path}" ]]; then
   exit 1
 fi
 
+info_plist="${app_path}/Contents/Info.plist"
+if ! /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "${info_plist}" 2>/dev/null; then
+  /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "${info_plist}"
+fi
+if [[ "$(plutil -extract LSUIElement raw -o - "${info_plist}")" != "true" ]]; then
+  print -u2 "Failed to mark the app as a background UI agent"
+  exit 1
+fi
+
 codesign --force --deep --sign - "${app_path}"
 
 archive_path="${build_root}/SmallDesktopDisplayBridge-macos-${target_arch}.zip"
