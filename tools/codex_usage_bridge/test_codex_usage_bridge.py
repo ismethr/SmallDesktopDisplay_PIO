@@ -150,6 +150,73 @@ class BridgeTests(unittest.TestCase):
         )
         self.assertEqual(55, snapshot.remaining_percent)
 
+    def test_parse_official_app_server_prefers_main_bucket_over_unused_model_bucket(self) -> None:
+        snapshot = bridge.parse_app_server_rate_limits(
+            {
+                "rateLimits": {
+                    "limitId": "codex",
+                    "primary": {
+                        "usedPercent": 19,
+                        "windowDurationMins": 10_080,
+                        "resetsAt": 8_200,
+                    },
+                    "secondary": None,
+                },
+                "rateLimitsByLimitId": {
+                    "codex_bengalfox": {
+                        "limitId": "codex_bengalfox",
+                        "limitName": "GPT-5.3-Codex-Spark",
+                        "primary": {
+                            "usedPercent": 0,
+                            "windowDurationMins": 300,
+                            "resetsAt": 2_000,
+                        },
+                        "secondary": {
+                            "usedPercent": 0,
+                            "windowDurationMins": 10_080,
+                            "resetsAt": 9_000,
+                        },
+                    },
+                    "codex": {
+                        "limitId": "codex",
+                        "primary": {
+                            "usedPercent": 19,
+                            "windowDurationMins": 10_080,
+                            "resetsAt": 8_200,
+                        },
+                    },
+                },
+            },
+            now=1_000,
+        )
+        self.assertEqual(19, snapshot.used_percent)
+        self.assertEqual(81, snapshot.remaining_percent)
+
+    def test_parse_official_app_server_falls_back_to_named_codex_bucket(self) -> None:
+        snapshot = bridge.parse_app_server_rate_limits(
+            {
+                "rateLimitsByLimitId": {
+                    "model-specific": {
+                        "limitId": "codex_bengalfox",
+                        "secondary": {
+                            "usedPercent": 0,
+                            "windowDurationMins": 10_080,
+                        },
+                    },
+                    "main": {
+                        "limitId": "codex",
+                        "primary": {
+                            "usedPercent": 23,
+                            "windowDurationMins": 10_080,
+                        },
+                    },
+                }
+            },
+            now=1_000,
+        )
+        self.assertEqual(23, snapshot.used_percent)
+        self.assertEqual(77, snapshot.remaining_percent)
+
     def test_preferred_source_uses_official_app_server(self) -> None:
         expected = bridge.UsageSnapshot(valid=True, used_percent=12, remaining_percent=88)
         binary = Path("/Applications/ChatGPT.app/Contents/Resources/codex")

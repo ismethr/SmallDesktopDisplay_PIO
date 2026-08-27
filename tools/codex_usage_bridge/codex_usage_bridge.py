@@ -284,17 +284,36 @@ def parse_app_server_rate_limits(
             }
         )
 
-    buckets = payload.get("rateLimitsByLimitId")
-    if isinstance(buckets, dict):
-        for bucket in buckets.values():
-            if isinstance(bucket, dict):
-                add_window(bucket.get("primary"))
-                add_window(bucket.get("secondary"))
-
+    # The app-server contract defines rateLimits as the backward-compatible
+    # main Codex bucket. Prefer it exactly as CodexBar does. Flattening every
+    # entry in rateLimitsByLimitId is incorrect because model-specific buckets
+    # (for example GPT-5.3-Codex-Spark) may have their own unused weekly window;
+    # choosing that window would falsely report 100% Codex quota remaining.
     legacy_bucket = payload.get("rateLimits")
     if isinstance(legacy_bucket, dict):
         add_window(legacy_bucket.get("primary"))
         add_window(legacy_bucket.get("secondary"))
+
+    # Older/mixed app-server versions may omit the compatibility view. In that
+    # case only accept the explicitly identified main Codex bucket, never an
+    # arbitrary model-specific quota.
+    if not normalized:
+        buckets = payload.get("rateLimitsByLimitId")
+        codex_bucket: Any = None
+        if isinstance(buckets, dict):
+            codex_bucket = buckets.get("codex")
+            if not isinstance(codex_bucket, dict):
+                codex_bucket = next(
+                    (
+                        bucket
+                        for bucket in buckets.values()
+                        if isinstance(bucket, dict) and bucket.get("limitId") == "codex"
+                    ),
+                    None,
+                )
+        if isinstance(codex_bucket, dict):
+            add_window(codex_bucket.get("primary"))
+            add_window(codex_bucket.get("secondary"))
 
     if not normalized:
         raise BridgeError("Codex app server returned no usable rate-limit window")
@@ -346,7 +365,7 @@ def fetch_usage_from_app_server(
     """Read ChatGPT/Codex quota through the documented local app-server protocol."""
     try:
         process = subprocess.Popen(
-            [str(codex_binary), "app-server"],
+            [str(codex_binary), "-s", "read-only", "-a", "never", "app-server"],
             **_app_server_process_options(),
         )
     except OSError as exc:
