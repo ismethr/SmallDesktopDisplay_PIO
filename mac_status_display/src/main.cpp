@@ -18,12 +18,20 @@ constexpr uint16_t kYellow = 0xF5C0;
 constexpr uint16_t kRed = 0xF9E7;
 constexpr uint16_t kBlue = 0x45BF;
 constexpr uint16_t kPurple = 0xA35F;
-constexpr uint16_t kFlagBlue = 0x001F;
-constexpr uint16_t kFlagRed = 0xF800;
-constexpr uint16_t kFlagYellow = 0xFFE0;
-constexpr uint16_t kFlagGreen = 0x07E0;
-constexpr uint16_t kFlagOrange = 0xFD20;
-constexpr uint16_t kFlagDarkBlue = 0x0011;
+constexpr uint16_t flagPanelColor(uint16_t rgb565) {
+  return static_cast<uint16_t>(((rgb565 & 0xF800U) >> 11) |
+                               (rgb565 & 0x07E0U) |
+                               ((rgb565 & 0x001FU) << 11));
+}
+
+// The flag area is calibrated for this panel's observed red/blue ordering.
+// Keep the rest of the established theme colors unchanged.
+constexpr uint16_t kFlagBlue = flagPanelColor(0x001F);
+constexpr uint16_t kFlagRed = flagPanelColor(0xF800);
+constexpr uint16_t kFlagYellow = flagPanelColor(0xFFE0);
+constexpr uint16_t kFlagGreen = flagPanelColor(0x07E0);
+constexpr uint16_t kFlagOrange = flagPanelColor(0xFD20);
+constexpr uint16_t kFlagDarkBlue = flagPanelColor(0x0011);
 
 TFT_eSPI display;
 char serialBuffer[macstatus::kMaximumFrameLength + 1] = {};
@@ -217,7 +225,7 @@ const SimpleFlag kSimpleFlags[] = {
     {{'H', 'U', '\0'}, kFlagRed, TFT_WHITE, kFlagGreen, false},
     {{'E', 'E', '\0'}, kFlagBlue, TFT_BLACK, TFT_WHITE, false},
     {{'L', 'T', '\0'}, kFlagYellow, kFlagGreen, kFlagRed, false},
-    {{'L', 'U', '\0'}, kFlagRed, TFT_WHITE, 0x867F, false},
+    {{'L', 'U', '\0'}, kFlagRed, TFT_WHITE, flagPanelColor(0x867F), false},
     {{'C', 'O', '\0'}, kFlagYellow, kFlagBlue, kFlagRed, false},
     {{'B', 'G', '\0'}, TFT_WHITE, kFlagGreen, kFlagRed, false},
     {{'E', 'S', '\0'}, kFlagRed, kFlagYellow, kFlagRed, false},
