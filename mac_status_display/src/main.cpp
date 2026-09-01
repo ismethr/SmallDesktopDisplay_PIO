@@ -18,6 +18,12 @@ constexpr uint16_t kYellow = 0xF5C0;
 constexpr uint16_t kRed = 0xF9E7;
 constexpr uint16_t kBlue = 0x45BF;
 constexpr uint16_t kPurple = 0xA35F;
+constexpr uint16_t kFlagBlue = 0x001F;
+constexpr uint16_t kFlagRed = 0xF800;
+constexpr uint16_t kFlagYellow = 0xFFE0;
+constexpr uint16_t kFlagGreen = 0x07E0;
+constexpr uint16_t kFlagOrange = 0xFD20;
+constexpr uint16_t kFlagDarkBlue = 0x0011;
 
 TFT_eSPI display;
 char serialBuffer[macstatus::kMaximumFrameLength + 1] = {};
@@ -131,44 +137,40 @@ uint16_t temperatureColor(int16_t tenths) {
 void drawMetricRow(int16_t top, const char *loadLabel, uint16_t loadTenths,
                    const char *temperatureLabel, int16_t temperatureTenths) {
   display.fillRect(14, top, 212, 36, kBackground);
+  drawDashedVerticalLine(140, top + 5, 27, kPanelBorder);
 
   display.setTextDatum(TL_DATUM);
   display.setTextFont(1);
   display.setTextSize(1);
   display.setTextColor(kMuted, kBackground);
   display.drawString(loadLabel, 18, top + 1);
-  display.drawString(temperatureLabel, 151, top + 1);
+  display.setTextDatum(TR_DATUM);
+  display.drawString(temperatureLabel, 219, top + 1);
 
   char loadValue[8];
   snprintf(loadValue, sizeof(loadValue), "%u%%",
            static_cast<unsigned>((loadTenths + 5U) / 10U));
-  display.setTextDatum(MC_DATUM);
+  display.setTextDatum(TL_DATUM);
   display.setTextFont(2);
-  display.setTextSize(2);
-  display.setTextColor(TFT_WHITE, kBackground);
-  display.drawString(loadValue, 73, top + 18);
   display.setTextSize(1);
+  display.setTextColor(TFT_WHITE, kBackground);
+  display.drawString(loadValue, 18, top + 12);
   drawProgressBar(18, top + 30, 112, loadTenths, loadColor(loadTenths));
 
   const bool validTemperature = temperatureTenths != macstatus::kMissingTemperature;
   const uint16_t color = validTemperature ? temperatureColor(temperatureTenths) : kMuted;
-  char temperatureValue[8];
+  char temperatureValue[10];
   if (validTemperature) {
-    snprintf(temperatureValue, sizeof(temperatureValue), "%d",
+    snprintf(temperatureValue, sizeof(temperatureValue), "%d`C",
              static_cast<int>((temperatureTenths + 5) / 10));
   } else {
-    snprintf(temperatureValue, sizeof(temperatureValue), "--");
+    snprintf(temperatureValue, sizeof(temperatureValue), "--`C");
   }
-  display.setTextDatum(MR_DATUM);
+  display.setTextDatum(TR_DATUM);
   display.setTextFont(2);
-  display.setTextSize(2);
-  display.setTextColor(color, kBackground);
-  display.drawString(temperatureValue, 204, top + 18);
   display.setTextSize(1);
-  display.drawCircle(209, top + 12, 2, color);
-  display.setTextDatum(ML_DATUM);
-  display.setTextFont(1);
-  display.drawString("C", 214, top + 18);
+  display.setTextColor(color, kBackground);
+  display.drawString(temperatureValue, 219, top + 12);
 }
 
 void formatRate(uint32_t bytesPerSecond, char *output, size_t outputSize) {
@@ -176,12 +178,166 @@ void formatRate(uint32_t bytesPerSecond, char *output, size_t outputSize) {
     snprintf(output, outputSize, "%luB/s", static_cast<unsigned long>(bytesPerSecond));
     return;
   }
-  const uint64_t divisor = bytesPerSecond < 1024UL * 1024UL ? 1024ULL : 1024ULL * 1024ULL;
-  const char unit = bytesPerSecond < 1024UL * 1024UL ? 'K' : 'M';
+  uint64_t divisor = 1024ULL;
+  char unit = 'K';
+  if (bytesPerSecond >= 1024UL * 1024UL * 1024UL) {
+    divisor = 1024ULL * 1024ULL * 1024ULL;
+    unit = 'G';
+  } else if (bytesPerSecond >= 1024UL * 1024UL) {
+    divisor = 1024ULL * 1024ULL;
+    unit = 'M';
+  }
   const uint64_t tenths = (static_cast<uint64_t>(bytesPerSecond) * 10ULL + divisor / 2ULL) / divisor;
   snprintf(output, outputSize, "%lu.%lu%c/s",
            static_cast<unsigned long>(tenths / 10ULL),
            static_cast<unsigned long>(tenths % 10ULL), unit);
+}
+
+struct SimpleFlag {
+  char country[3];
+  uint16_t first;
+  uint16_t second;
+  uint16_t third;
+  bool vertical;
+};
+
+const SimpleFlag kSimpleFlags[] = {
+    {{'D', 'E', '\0'}, TFT_BLACK, kFlagRed, kFlagYellow, false},
+    {{'F', 'R', '\0'}, kFlagBlue, TFT_WHITE, kFlagRed, true},
+    {{'I', 'T', '\0'}, kFlagGreen, TFT_WHITE, kFlagRed, true},
+    {{'N', 'L', '\0'}, kFlagRed, TFT_WHITE, kFlagBlue, false},
+    {{'R', 'U', '\0'}, TFT_WHITE, kFlagBlue, kFlagRed, false},
+    {{'U', 'A', '\0'}, kFlagBlue, kFlagBlue, kFlagYellow, false},
+    {{'I', 'E', '\0'}, kFlagGreen, TFT_WHITE, kFlagOrange, true},
+    {{'B', 'E', '\0'}, TFT_BLACK, kFlagYellow, kFlagRed, true},
+    {{'R', 'O', '\0'}, kFlagBlue, kFlagYellow, kFlagRed, true},
+    {{'P', 'L', '\0'}, TFT_WHITE, TFT_WHITE, kFlagRed, false},
+    {{'I', 'D', '\0'}, kFlagRed, kFlagRed, TFT_WHITE, false},
+    {{'A', 'T', '\0'}, kFlagRed, TFT_WHITE, kFlagRed, false},
+    {{'H', 'U', '\0'}, kFlagRed, TFT_WHITE, kFlagGreen, false},
+    {{'E', 'E', '\0'}, kFlagBlue, TFT_BLACK, TFT_WHITE, false},
+    {{'L', 'T', '\0'}, kFlagYellow, kFlagGreen, kFlagRed, false},
+    {{'L', 'U', '\0'}, kFlagRed, TFT_WHITE, 0x867F, false},
+    {{'C', 'O', '\0'}, kFlagYellow, kFlagBlue, kFlagRed, false},
+    {{'B', 'G', '\0'}, TFT_WHITE, kFlagGreen, kFlagRed, false},
+};
+
+void drawSimpleFlag(int16_t x, int16_t y, const SimpleFlag &flag) {
+  constexpr int16_t kWidth = 22;
+  constexpr int16_t kHeight = 12;
+  if (flag.vertical) {
+    display.fillRect(x, y, 7, kHeight, flag.first);
+    display.fillRect(x + 7, y, 8, kHeight, flag.second);
+    display.fillRect(x + 15, y, 7, kHeight, flag.third);
+  } else if (flag.first == flag.second) {
+    display.fillRect(x, y, kWidth, 6, flag.first);
+    display.fillRect(x, y + 6, kWidth, 6, flag.third);
+  } else if (flag.second == flag.third) {
+    display.fillRect(x, y, kWidth, 6, flag.first);
+    display.fillRect(x, y + 6, kWidth, 6, flag.second);
+  } else {
+    display.fillRect(x, y, kWidth, 4, flag.first);
+    display.fillRect(x, y + 4, kWidth, 4, flag.second);
+    display.fillRect(x, y + 8, kWidth, 4, flag.third);
+  }
+}
+
+void drawCountryFlag(int16_t x, int16_t y, const char country[3], bool stale) {
+  constexpr int16_t kWidth = 24;
+  constexpr int16_t kHeight = 14;
+  const int16_t innerX = x + 1;
+  const int16_t innerY = y + 1;
+  display.fillRect(innerX, innerY, kWidth - 2, kHeight - 2, kBackground);
+
+  if (strcmp(country, "US") == 0) {
+    display.fillRect(innerX, innerY, 22, 12, TFT_WHITE);
+    for (int16_t stripe = 0; stripe < 6; stripe += 2) {
+      display.fillRect(innerX, innerY + stripe * 2, 22, 2, kFlagRed);
+    }
+    display.fillRect(innerX, innerY, 10, 7, kFlagDarkBlue);
+    display.drawPixel(innerX + 2, innerY + 2, TFT_WHITE);
+    display.drawPixel(innerX + 6, innerY + 2, TFT_WHITE);
+    display.drawPixel(innerX + 4, innerY + 5, TFT_WHITE);
+  } else if (strcmp(country, "CN") == 0) {
+    display.fillRect(innerX, innerY, 22, 12, kFlagRed);
+    display.fillCircle(innerX + 5, innerY + 4, 2, kFlagYellow);
+    display.drawPixel(innerX + 10, innerY + 2, kFlagYellow);
+    display.drawPixel(innerX + 11, innerY + 5, kFlagYellow);
+    display.drawPixel(innerX + 9, innerY + 8, kFlagYellow);
+  } else if (strcmp(country, "JP") == 0) {
+    display.fillRect(innerX, innerY, 22, 12, TFT_WHITE);
+    display.fillCircle(innerX + 11, innerY + 6, 4, kFlagRed);
+  } else if (strcmp(country, "KR") == 0) {
+    display.fillRect(innerX, innerY, 22, 12, TFT_WHITE);
+    display.fillCircle(innerX + 11, innerY + 6, 4, kFlagRed);
+    display.fillRect(innerX + 7, innerY + 6, 8, 4, kFlagBlue);
+    display.drawFastHLine(innerX + 2, innerY + 3, 4, TFT_BLACK);
+    display.drawFastHLine(innerX + 16, innerY + 8, 4, TFT_BLACK);
+  } else if (strcmp(country, "GB") == 0) {
+    display.fillRect(innerX, innerY, 22, 12, kFlagDarkBlue);
+    display.drawLine(innerX, innerY, innerX + 21, innerY + 11, TFT_WHITE);
+    display.drawLine(innerX + 21, innerY, innerX, innerY + 11, TFT_WHITE);
+    display.fillRect(innerX + 9, innerY, 4, 12, TFT_WHITE);
+    display.fillRect(innerX, innerY + 4, 22, 4, TFT_WHITE);
+    display.fillRect(innerX + 10, innerY, 2, 12, kFlagRed);
+    display.fillRect(innerX, innerY + 5, 22, 2, kFlagRed);
+  } else if (strcmp(country, "CA") == 0) {
+    display.fillRect(innerX, innerY, 22, 12, TFT_WHITE);
+    display.fillRect(innerX, innerY, 5, 12, kFlagRed);
+    display.fillRect(innerX + 17, innerY, 5, 12, kFlagRed);
+    display.fillTriangle(innerX + 11, innerY + 2, innerX + 8, innerY + 8,
+                         innerX + 14, innerY + 8, kFlagRed);
+  } else if (strcmp(country, "BR") == 0) {
+    display.fillRect(innerX, innerY, 22, 12, kFlagGreen);
+    display.fillTriangle(innerX + 11, innerY + 1, innerX + 3, innerY + 6,
+                         innerX + 11, innerY + 11, kFlagYellow);
+    display.fillTriangle(innerX + 11, innerY + 1, innerX + 19, innerY + 6,
+                         innerX + 11, innerY + 11, kFlagYellow);
+    display.fillCircle(innerX + 11, innerY + 6, 3, kFlagBlue);
+  } else if (strcmp(country, "CH") == 0) {
+    display.fillRect(innerX, innerY, 22, 12, kFlagRed);
+    display.fillRect(innerX + 9, innerY + 2, 4, 8, TFT_WHITE);
+    display.fillRect(innerX + 7, innerY + 4, 8, 4, TFT_WHITE);
+  } else if (strcmp(country, "IN") == 0) {
+    display.fillRect(innerX, innerY, 22, 4, kFlagOrange);
+    display.fillRect(innerX, innerY + 4, 22, 4, TFT_WHITE);
+    display.fillRect(innerX, innerY + 8, 22, 4, kFlagGreen);
+    display.drawCircle(innerX + 11, innerY + 6, 2, kFlagBlue);
+  } else {
+    bool matched = false;
+    for (const SimpleFlag &flag : kSimpleFlags) {
+      if (strcmp(country, flag.country) == 0) {
+        drawSimpleFlag(innerX, innerY, flag);
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      display.fillRect(innerX, innerY, 22, 12, 0x2104);
+      display.setTextDatum(MC_DATUM);
+      display.setTextFont(1);
+      display.setTextSize(1);
+      display.setTextColor(kMuted, 0x2104);
+      display.drawString(country, innerX + 11, innerY + 6);
+    }
+  }
+  display.drawRect(x, y, kWidth, kHeight, stale ? kMuted : kPanelBorder);
+}
+
+void splitNetworkLocation(const char *location, char country[3], char detail[4]) {
+  strcpy(country, "--");
+  strcpy(detail, "--");
+  if (location == nullptr || strlen(location) < 2 || location[0] == '-') return;
+  country[0] = location[0];
+  country[1] = location[1];
+  country[2] = '\0';
+  const char *separator = strchr(location, '-');
+  if (separator == nullptr || separator[1] == '\0') {
+    strcpy(detail, country);
+    return;
+  }
+  strncpy(detail, separator + 1, 3);
+  detail[3] = '\0';
 }
 
 void drawChatGptIcon(int16_t x, int16_t y, uint16_t color) {
@@ -243,16 +399,20 @@ void drawNetwork(uint32_t download, uint32_t upload, const char *location,
                  bool locationStale) {
   char downText[16];
   char upText[16];
+  char country[3];
+  char locationDetail[4];
   formatRate(download, downText, sizeof(downText));
   formatRate(upload, upText, sizeof(upText));
+  splitNetworkLocation(location, country, locationDetail);
   display.fillRect(14, 205, 64, 21, kBackground);
   display.fillRect(86, 205, 67, 21, kBackground);
   display.fillRect(161, 205, 65, 21, kBackground);
+  drawCountryFlag(15, 208, country, locationStale);
   display.setTextDatum(MC_DATUM);
   display.setTextFont(2);
   display.setTextSize(1);
   display.setTextColor(locationStale ? kMuted : TFT_WHITE, kBackground);
-  display.drawString(location, 46, 217);
+  display.drawString(locationDetail, 61, 215);
   display.setTextColor(TFT_WHITE, kBackground);
   display.drawString(downText, 119, 217);
   display.drawString(upText, 194, 217);
