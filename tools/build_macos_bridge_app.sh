@@ -5,14 +5,17 @@ script_dir="${0:A:h}"
 repository_root="${script_dir:h}"
 bridge_directory="${repository_root}/tools/desktop_display_bridge"
 launcher="${bridge_directory}/macos_bridge_launcher.py"
+smc_source="${bridge_directory}/macos_smc_temperature.c"
 build_root="${repository_root}/build/macos_bridge_app"
+helper_directory="${build_root}/helpers"
+smc_binary="${helper_directory}/SmallDesktopDisplaySMC"
 dist_directory="${build_root}/dist"
 work_directory="${build_root}/work"
 spec_directory="${build_root}/spec"
 pyinstaller_config_directory="${build_root}/pyinstaller-config"
 python_command="${PYTHON:-${repository_root}/.venv/bin/python}"
 target_arch="${MACOS_BRIDGE_ARCH:-$(uname -m)}"
-release_version="${BRIDGE_VERSION:-1.8.0}"
+release_version="${BRIDGE_VERSION:-1.9.0}"
 
 if [[ ! -x "${python_command}" ]]; then
   print -u2 "Python was not found: ${python_command}"
@@ -21,6 +24,10 @@ if [[ ! -x "${python_command}" ]]; then
 fi
 if [[ ! -f "${launcher}" ]]; then
   print -u2 "macOS bridge launcher was not found: ${launcher}"
+  exit 2
+fi
+if [[ ! -f "${smc_source}" ]]; then
+  print -u2 "macOS SMC temperature helper source was not found: ${smc_source}"
   exit 2
 fi
 if [[ "${target_arch}" != "x86_64" && "${target_arch}" != "arm64" && "${target_arch}" != "universal2" ]]; then
@@ -42,8 +49,40 @@ mkdir -p \
   "${dist_directory}" \
   "${work_directory}" \
   "${spec_directory}" \
-  "${pyinstaller_config_directory}"
+  "${pyinstaller_config_directory}" \
+  "${helper_directory}"
 export PYINSTALLER_CONFIG_DIR="${pyinstaller_config_directory}"
+
+compile_smc_helper() {
+  local architecture="$1"
+  local output="$2"
+  local deployment_target="10.15"
+  if [[ "${architecture}" == "arm64" ]]; then
+    deployment_target="11.0"
+  fi
+  xcrun --sdk macosx clang -O2 -Wall -Wextra -Werror \
+    -arch "${architecture}" \
+    -mmacosx-version-min="${deployment_target}" \
+    "${smc_source}" \
+    -framework IOKit \
+    -framework CoreFoundation \
+    -o "${output}"
+}
+
+if ! command -v xcrun >/dev/null 2>&1; then
+  print -u2 "xcrun was not found; Xcode Command Line Tools are required"
+  exit 2
+fi
+if [[ "${target_arch}" == "universal2" ]]; then
+  compile_smc_helper x86_64 "${helper_directory}/SmallDesktopDisplaySMC-x86_64"
+  compile_smc_helper arm64 "${helper_directory}/SmallDesktopDisplaySMC-arm64"
+  xcrun lipo -create \
+    "${helper_directory}/SmallDesktopDisplaySMC-x86_64" \
+    "${helper_directory}/SmallDesktopDisplaySMC-arm64" \
+    -output "${smc_binary}"
+else
+  compile_smc_helper "${target_arch}" "${smc_binary}"
+fi
 
 "${python_command}" -m PyInstaller \
   --noconfirm \
@@ -59,6 +98,8 @@ export PYINSTALLER_CONFIG_DIR="${pyinstaller_config_directory}"
   --paths "${bridge_directory}" \
   --paths "${repository_root}/tools/codex_usage_bridge" \
   --hidden-import codex_usage_bridge \
+  --add-binary "${smc_binary}:." \
+  --add-data "${bridge_directory}/THIRD_PARTY_NOTICES.md:." \
   "${launcher}"
 
 app_path="${dist_directory}/SmallDesktopDisplayBridge.app"

@@ -2,7 +2,7 @@
 
 这个后台只服务第二块 USB 系统状态屏：
 
-- 状态屏不使用 Wi-Fi，后台每秒通过 USB 串口发送 CPU、内存、Codex 周剩余用量、下载和上传速度。
+- 状态屏不使用 Wi-Fi，后台每秒通过 USB 串口发送 CPU、内存、CPU/GPU 温度、网络出口位置、Codex 周剩余用量、下载和上传速度。
 - Codex 登录或网络请求失败时，CPU、内存和网速仍会更新，用量卡片会保留旧值并显示为陈旧；串口重新插入后会自动连接。
 - 第一块天气时钟不运行此桥接，也不访问电脑。
 
@@ -12,6 +12,8 @@ CPU、内存和网卡计数统一由 [psutil](https://github.com/giampaolo/psuti
 | --- | --- | --- |
 | 默认网卡 | 系统默认路由接口 | 系统路由探测，必要时回退到 `Get-NetRoute` |
 | 串口 | `/dev/cu.usbserial-*` 等 USB 串口 | `COM` 口及 USB VID/描述识别 |
+| CPU/GPU 温度 | App 内置只读 AppleSMC 读取器；不控制风扇、不要求管理员权限 | 暂不采集，屏幕显示 `--°C` |
+| 网络位置 | 通过公网出口 IP 显示国家/地区缩写 | 同 macOS |
 | Codex 用量 | 优先调用 ChatGPT/Codex 自带的本机 App Server | 优先调用 Codex 自带的本机 App Server |
 
 ## macOS 安装与运行
@@ -116,6 +118,11 @@ USB 状态屏不需要入站网络访问，建议使用 `--listen-host 127.0.0.1
 - `CODEX_BRIDGE_CODEX_BINARY`：可选的 Codex 可执行文件路径；macOS 会自动发现 `/Applications/ChatGPT.app/Contents/Resources/codex`。
 - `DESKTOP_BRIDGE_SERIAL_PORT`：状态屏固定串口；例如 macOS 的 `/dev/cu.usbserial-2140` 或 Windows 的 `COM7`。
 - `DESKTOP_BRIDGE_NETWORK_INTERFACE`：可选网卡名；留空时跟随系统默认路由。
+- `DESKTOP_BRIDGE_TEMPERATURE_REFRESH_SECONDS`：macOS 温度刷新周期，默认 `10` 秒，可设为 `2`–`300` 秒。
+- `DESKTOP_BRIDGE_TEMPERATURE_COMMAND`：可选的只读 SMC 辅助程序路径；发布版 App 已内置，通常无需设置。
+- `DESKTOP_BRIDGE_LOCATION_REFRESH_SECONDS`：公网出口位置刷新周期，默认 `30` 秒，可设为 `10`–`3600` 秒。
+- `DESKTOP_BRIDGE_LOCATION_ENABLED`：设为 `0`、`false`、`no` 或 `off` 可完全关闭公网出口位置请求。
+- `DESKTOP_BRIDGE_LOCATION_URL`：位置服务地址，当前仅接受 `https://ipwho.is/`。
 - `DESKTOP_BRIDGE_NIGHT_START_HOUR`、`DESKTOP_BRIDGE_NIGHT_END_HOUR`：夜间节能开始和结束小时，默认 `0` 和 `7`；两者相同表示关闭定时节能。
 - `DESKTOP_BRIDGE_DAY_BRIGHTNESS`、`DESKTOP_BRIDGE_NIGHT_BRIGHTNESS`：白天和夜间亮度百分比，默认 `50` 和 `10`。
 - `DESKTOP_BRIDGE_OFFLINE_BRIGHTNESS`：连续 4 秒收不到数据后的亮度，默认 `5`。
@@ -136,9 +143,11 @@ USB 状态屏不需要入站网络访问，建议使用 `--listen-host 127.0.0.1
 串口为 115200 baud，每行一帧：
 
 ```text
-$MSD3,<序号>,<CPU×10>,<内存×10>,<Codex剩余×10>,<用量陈旧0/1>,<下载B/s>,<上传B/s>,<当前亮度>,<离线亮度>*<CRC16>
+$MSD4,<序号>,<CPU×10>,<内存×10>,<CPU温度×10>,<GPU温度×10>,<Codex剩余×10>,<用量陈旧0/1>,<下载B/s>,<上传B/s>,<网络位置>,<位置陈旧0/1>,<当前亮度>,<离线亮度>*<CRC16>
 ```
 
-`MSD3` 将旧协议的温度字段替换为 Codex 周剩余用量，并增加陈旧标志，防止新旧固件误读。CRC 使用 CRC-16/CCITT-FALSE，校验范围是 `$` 之后、`*` 之前的 ASCII 内容。用量尚未取得时发送 `-1`；陈旧标志为 `1` 时屏幕保留百分比但改用灰色。ESP8266 只接受版本、字段数、数值范围和 CRC 均合法的完整帧，连续 4 秒没有合法帧就显示 `USB LOST` 并使用离线亮度。重新收到合法帧后会按电脑当前时段自动恢复亮度。
+`MSD4` 新增 CPU/GPU 温度和最长 8 个 ASCII 字符的公网出口位置，例如 `CN-SH`、`US-CA`。温度或用量尚未取得时对应数值字段发送 `-1`，位置缺失时发送 `--`；自动刷新失败会保留上次成功位置并以灰色显示。新版固件仍接受 `MSD3`，并将温度与位置显示为占位符，便于先刷固件、后更新桥接程序。CRC 使用 CRC-16/CCITT-FALSE，校验范围是 `$` 之后、`*` 之前的 ASCII 内容。ESP8266 只接受版本、字段数、数值范围和 CRC 均合法的完整帧，连续 4 秒没有合法帧就显示 `USB LOST` 并使用离线亮度。
+
+网络位置的产品思路与失败保留旧值策略参考了 MIT 许可的 [Here for macOS](https://github.com/koalaauto/here-macos)。桥接程序只将 `国家-地区` 短标签发送给小屏，不发送公网 IP、经纬度、城市全名或 ISP。启用该功能时，`ipwho.is` 会像任何公网服务一样看到请求来源 IP；不希望发生此请求时可设置 `DESKTOP_BRIDGE_LOCATION_ENABLED=0`。
 
 第二块屏幕固件位于 [`mac_status_display`](../../mac_status_display/README.md)；目录名为兼容已有构建命令而保留。

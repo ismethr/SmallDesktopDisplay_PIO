@@ -48,21 +48,99 @@ class DesktopDisplayBridgeTests(unittest.TestCase):
             sequence=65537,
             cpu_percent=12.34,
             memory_percent=99.96,
+            cpu_temperature_celsius=49.04,
+            gpu_temperature_celsius=61.06,
             codex_remaining_percent=52,
             codex_usage_stale=True,
             download_bps=123456,
             upload_bps=-1,
+            network_location="CN-SH",
+            network_location_stale=True,
             display_brightness_percent=10,
             offline_brightness_percent=5,
         )
         frame = bridge.encode_status_frame(snapshot).decode("ascii")
         payload, checksum = frame[1:].strip().split("*")
-        self.assertEqual("MSD3,1,123,1000,520,1,123456,0,10,5", payload)
+        self.assertEqual(
+            "MSD4,1,123,1000,490,611,520,1,123456,0,CN-SH,1,10,5",
+            payload,
+        )
         self.assertEqual(bridge.crc16_ccitt(payload.encode("ascii")), int(checksum, 16))
 
     def test_status_frame_uses_codex_usage_sentinel(self) -> None:
         snapshot = bridge.MacStatusSnapshot(valid=True, codex_remaining_percent=None)
         self.assertIn(f",{bridge.MISSING_CODEX_USAGE},0,", bridge.encode_status_frame(snapshot).decode())
+
+    def test_status_frame_uses_temperature_sentinels(self) -> None:
+        snapshot = bridge.MacStatusSnapshot(valid=True)
+        self.assertIn(
+            f",{bridge.MISSING_TEMPERATURE},{bridge.MISSING_TEMPERATURE},",
+            bridge.encode_status_frame(snapshot).decode(),
+        )
+
+    def test_smc_output_selects_hottest_cpu_and_gpu_sensor(self) -> None:
+        output = """
+[TC0D]     43.0
+[TC0C]     38.0
+[TC3C]     49.0
+[TG0D]     61.0
+[TA0P]     24.0
+[broken]   99.0
+"""
+        values = bridge.parse_smc_temperature_output(output)
+        self.assertEqual((49.0, 61.0), bridge.select_component_temperatures(values))
+
+    def test_smc_output_filters_invalid_temperatures(self) -> None:
+        values = bridge.parse_smc_temperature_output(
+            "[TC0D] 0.0\n[TC1C] 126.0\n[TG0D] nan\n[TG0P] 55.5\n"
+        )
+        self.assertEqual({"TG0P": 55.5}, values)
+
+    def test_temperature_reader_reports_partial_sensor_availability(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="[TC0D] 44.0\n", stderr="")
+        with mock.patch.object(
+            bridge,
+            "macos_temperature_commands",
+            return_value=[(("/tmp/smc-reader",), "test-smc")],
+        ), mock.patch.object(bridge.subprocess, "run", return_value=completed):
+            snapshot = bridge.read_hardware_temperatures(platform_name="darwin")
+        self.assertEqual(44.0, snapshot.cpu_celsius)
+        self.assertIsNone(snapshot.gpu_celsius)
+        self.assertEqual("GPU temperature unavailable", snapshot.error)
+        self.assertEqual("test-smc", snapshot.source)
+
+    def test_ipwho_location_prefers_region_code(self) -> None:
+        snapshot = bridge.parse_ipwho_network_location(
+            {
+                "success": True,
+                "country_code": "cn",
+                "region_code": "sh",
+                "city": "Shanghai",
+            }
+        )
+        self.assertEqual("CN-SH", snapshot.label)
+        self.assertEqual("ipwho.is", snapshot.source)
+        self.assertFalse(snapshot.stale)
+
+    def test_ipwho_location_falls_back_to_city_initials(self) -> None:
+        snapshot = bridge.parse_ipwho_network_location(
+            {
+                "country_code": "US",
+                "region_code": "",
+                "city": "Los Angeles",
+            }
+        )
+        self.assertEqual("US-LA", snapshot.label)
+        self.assertEqual("ZU", bridge.network_location_initials("Zürich"))
+
+    def test_network_location_keeps_last_success_as_stale(self) -> None:
+        previous = bridge.NetworkLocationSnapshot(label="JP-TK", source="ipwho.is")
+        failed = bridge.NetworkLocationSnapshot(error="offline", sampled_at=123)
+        merged = bridge.merge_network_location(previous, failed)
+        self.assertEqual("JP-TK", merged.label)
+        self.assertTrue(merged.stale)
+        self.assertEqual("offline", merged.error)
+        self.assertEqual(123, merged.sampled_at)
 
     def test_invalid_snapshot_cannot_be_sent(self) -> None:
         with self.assertRaises(ValueError):

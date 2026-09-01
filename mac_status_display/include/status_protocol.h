@@ -11,16 +11,21 @@
 namespace macstatus {
 
 constexpr int16_t kMissingCodexUsage = -1;
-constexpr size_t kMaximumFrameLength = 112;
+constexpr int16_t kMissingTemperature = -1;
+constexpr size_t kMaximumFrameLength = 128;
 
 struct StatusFrame {
   uint16_t sequence;
   uint16_t cpuTenths;
   uint16_t memoryTenths;
+  int16_t cpuTemperatureTenths;
+  int16_t gpuTemperatureTenths;
   int16_t codexRemainingTenths;
   bool codexUsageStale;
   uint32_t downloadBytesPerSecond;
   uint32_t uploadBytesPerSecond;
+  char networkLocation[9];
+  bool networkLocationStale;
   uint8_t brightnessPercent;
   uint8_t offlineBrightnessPercent;
 };
@@ -67,7 +72,10 @@ inline bool parseSigned(const char *text, int32_t minimum, int32_t maximum, int3
 }
 
 // Parses a mutable line in the form:
-// $MSD3,seq,cpu10,mem10,codex_remaining10,codex_stale,down_bps,up_bps,brightness,offline_brightness*CRC16
+// Current protocol:
+// $MSD4,seq,cpu10,mem10,cpu_temp10,gpu_temp10,codex_remaining10,codex_stale,down_bps,up_bps,network_location,location_stale,brightness,offline_brightness*CRC16
+// MSD3 is also accepted during coordinated bridge/firmware upgrades and maps
+// both temperatures to kMissingTemperature.
 inline bool parseStatusFrame(char *line, StatusFrame &output) {
   if (line == nullptr || line[0] != '$') return false;
   char *star = strrchr(line, '*');
@@ -85,14 +93,23 @@ inline bool parseStatusFrame(char *line, StatusFrame &output) {
 
   *star = '\0';
   char *save = nullptr;
-  char *tokens[10] = {};
+  char *tokens[14] = {};
   size_t tokenCount = 0;
   for (char *token = strtok_r(line + 1, ",", &save); token != nullptr;
        token = strtok_r(nullptr, ",", &save)) {
-    if (tokenCount >= 10) return false;
+    if (tokenCount >= 14) return false;
     tokens[tokenCount++] = token;
   }
-  if (tokenCount != 10 || strcmp(tokens[0], "MSD3") != 0) return false;
+  const bool isCurrent = tokenCount == 14 && strcmp(tokens[0], "MSD4") == 0;
+  const bool isLegacy = tokenCount == 10 && strcmp(tokens[0], "MSD3") == 0;
+  if (!isCurrent && !isLegacy) return false;
+
+  const size_t codexIndex = isCurrent ? 6 : 4;
+  const size_t staleIndex = isCurrent ? 7 : 5;
+  const size_t downloadIndex = isCurrent ? 8 : 6;
+  const size_t uploadIndex = isCurrent ? 9 : 7;
+  const size_t brightnessIndex = isCurrent ? 12 : 8;
+  const size_t offlineBrightnessIndex = isCurrent ? 13 : 9;
 
   uint32_t sequence = 0;
   uint32_t cpu = 0;
@@ -100,27 +117,55 @@ inline bool parseStatusFrame(char *line, StatusFrame &output) {
   uint32_t codexStale = 0;
   uint32_t download = 0;
   uint32_t upload = 0;
+  uint32_t locationStale = 0;
   uint32_t brightness = 0;
   uint32_t offlineBrightness = 0;
+  int32_t cpuTemperature = kMissingTemperature;
+  int32_t gpuTemperature = kMissingTemperature;
   int32_t codexRemaining = 0;
   if (!parseUnsigned(tokens[1], UINT16_MAX, sequence) ||
       !parseUnsigned(tokens[2], 1000, cpu) ||
       !parseUnsigned(tokens[3], 1000, memory) ||
-      !parseSigned(tokens[4], kMissingCodexUsage, 1000, codexRemaining) ||
-      !parseUnsigned(tokens[5], 1, codexStale) ||
-      !parseUnsigned(tokens[6], UINT32_MAX, download) ||
-      !parseUnsigned(tokens[7], UINT32_MAX, upload) ||
-      !parseUnsigned(tokens[8], 100, brightness) ||
-      !parseUnsigned(tokens[9], 100, offlineBrightness)) {
+      (isCurrent &&
+       (!parseSigned(tokens[4], kMissingTemperature, 1500, cpuTemperature) ||
+        !parseSigned(tokens[5], kMissingTemperature, 1500, gpuTemperature))) ||
+      !parseSigned(tokens[codexIndex], kMissingCodexUsage, 1000, codexRemaining) ||
+      !parseUnsigned(tokens[staleIndex], 1, codexStale) ||
+      !parseUnsigned(tokens[downloadIndex], UINT32_MAX, download) ||
+      !parseUnsigned(tokens[uploadIndex], UINT32_MAX, upload) ||
+      (isCurrent &&
+       (!parseUnsigned(tokens[11], 1, locationStale) || strlen(tokens[10]) < 2 ||
+        strlen(tokens[10]) > 8)) ||
+      !parseUnsigned(tokens[brightnessIndex], 100, brightness) ||
+      !parseUnsigned(tokens[offlineBrightnessIndex], 100, offlineBrightness)) {
     return false;
   }
 
-  StatusFrame candidate = {
-      static_cast<uint16_t>(sequence), static_cast<uint16_t>(cpu),
-      static_cast<uint16_t>(memory), static_cast<int16_t>(codexRemaining),
-      codexStale != 0,
-      download, upload, static_cast<uint8_t>(brightness),
-      static_cast<uint8_t>(offlineBrightness)};
+  if (isCurrent) {
+    for (const char *cursor = tokens[10]; *cursor != '\0'; ++cursor) {
+      const bool allowed = (*cursor >= 'A' && *cursor <= 'Z') ||
+                           (*cursor >= '0' && *cursor <= '9') || *cursor == '-' ||
+                           *cursor == '?';
+      if (!allowed) return false;
+    }
+  }
+
+  StatusFrame candidate;
+  memset(&candidate, 0, sizeof(candidate));
+  candidate.sequence = static_cast<uint16_t>(sequence);
+  candidate.cpuTenths = static_cast<uint16_t>(cpu);
+  candidate.memoryTenths = static_cast<uint16_t>(memory);
+  candidate.cpuTemperatureTenths = static_cast<int16_t>(cpuTemperature);
+  candidate.gpuTemperatureTenths = static_cast<int16_t>(gpuTemperature);
+  candidate.codexRemainingTenths = static_cast<int16_t>(codexRemaining);
+  candidate.codexUsageStale = codexStale != 0;
+  candidate.downloadBytesPerSecond = download;
+  candidate.uploadBytesPerSecond = upload;
+  strncpy(candidate.networkLocation, isCurrent ? tokens[10] : "--",
+          sizeof(candidate.networkLocation) - 1);
+  candidate.networkLocationStale = isCurrent && locationStale != 0;
+  candidate.brightnessPercent = static_cast<uint8_t>(brightness);
+  candidate.offlineBrightnessPercent = static_cast<uint8_t>(offlineBrightness);
   output = candidate;
   return true;
 }

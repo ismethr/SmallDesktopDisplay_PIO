@@ -10,16 +10,21 @@ import math
 import os
 import platform
 import re
+import shutil
 import socket
 import subprocess
 import sys
 import threading
 import time
+import unicodedata
+import urllib.error
+import urllib.request
 from dataclasses import asdict, dataclass, replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Mapping, Protocol
+from urllib.parse import urlparse
 
 try:
     import psutil  # type: ignore[import-not-found]
@@ -44,14 +49,23 @@ import codex_usage_bridge as codex  # noqa: E402
 
 DEFAULT_SERIAL_BAUD = 115200
 DEFAULT_SAMPLE_SECONDS = 1.0
+DEFAULT_TEMPERATURE_REFRESH_SECONDS = 10.0
+DEFAULT_TEMPERATURE_TIMEOUT_SECONDS = 4.0
+DEFAULT_NETWORK_LOCATION_REFRESH_SECONDS = 30.0
+DEFAULT_NETWORK_LOCATION_TIMEOUT_SECONDS = 8.0
+DEFAULT_NETWORK_LOCATION_URL = "https://ipwho.is/"
 DEFAULT_RECONNECT_SECONDS = 2.0
 DEFAULT_NIGHT_START_HOUR = 0
 DEFAULT_NIGHT_END_HOUR = 7
 DEFAULT_DAY_BRIGHTNESS = 50
 DEFAULT_NIGHT_BRIGHTNESS = 10
 DEFAULT_OFFLINE_BRIGHTNESS = 5
-FRAME_PREFIX = "MSD3"
+FRAME_PREFIX = "MSD4"
 MISSING_CODEX_USAGE = -1
+MISSING_TEMPERATURE = -1
+MISSING_NETWORK_LOCATION = "--"
+MACOS_SMC_HELPER_NAME = "SmallDesktopDisplaySMC"
+MACOS_STATS_SMC = Path("/Applications/Stats.app/Contents/Resources/smc")
 MACOS_ROUTE_COMMAND = ("/sbin/route", "-n", "get", "default")
 WINDOWS_ROUTE_COMMAND = (
     "powershell.exe",
@@ -73,11 +87,19 @@ class NetCounters(Protocol):
 
 @dataclass(frozen=True)
 class DesktopStatusSnapshot:
-    schema: int = 2
+    schema: int = 3
     valid: bool = False
     sequence: int = 0
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
+    cpu_temperature_celsius: float | None = None
+    gpu_temperature_celsius: float | None = None
+    temperature_source: str | None = None
+    temperature_error: str | None = "waiting for first temperature sample"
+    network_location: str | None = None
+    network_location_stale: bool = False
+    network_location_source: str | None = None
+    network_location_error: str | None = "waiting for first network location"
     codex_remaining_percent: int | None = None
     codex_usage_stale: bool = False
     download_bps: int = 0
@@ -153,6 +175,52 @@ class UsbState:
             self._snapshot = snapshot
 
 
+@dataclass(frozen=True)
+class TemperatureSnapshot:
+    cpu_celsius: float | None = None
+    gpu_celsius: float | None = None
+    source: str | None = None
+    sampled_at: int | None = None
+    error: str | None = "waiting for first temperature sample"
+
+
+class TemperatureState:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._snapshot = TemperatureSnapshot()
+
+    def get(self) -> TemperatureSnapshot:
+        with self._lock:
+            return self._snapshot
+
+    def set(self, snapshot: TemperatureSnapshot) -> None:
+        with self._lock:
+            self._snapshot = snapshot
+
+
+@dataclass(frozen=True)
+class NetworkLocationSnapshot:
+    label: str | None = None
+    stale: bool = False
+    source: str | None = None
+    sampled_at: int | None = None
+    error: str | None = "waiting for first network location"
+
+
+class NetworkLocationState:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._snapshot = NetworkLocationSnapshot()
+
+    def get(self) -> NetworkLocationSnapshot:
+        with self._lock:
+            return self._snapshot
+
+    def set(self, snapshot: NetworkLocationSnapshot) -> None:
+        with self._lock:
+            self._snapshot = snapshot
+
+
 def crc16_ccitt(data: bytes) -> int:
     """CRC-16/CCITT-FALSE used by the desktop bridge and ESP8266."""
     crc = 0xFFFF
@@ -177,16 +245,33 @@ def encode_status_frame(snapshot: DesktopStatusSnapshot) -> bytes:
         if snapshot.codex_remaining_percent is None
         else _bounded_tenths(float(snapshot.codex_remaining_percent), 0, 1000)
     )
+    cpu_temperature = (
+        MISSING_TEMPERATURE
+        if snapshot.cpu_temperature_celsius is None
+        else _bounded_tenths(snapshot.cpu_temperature_celsius, 0, 1500)
+    )
+    gpu_temperature = (
+        MISSING_TEMPERATURE
+        if snapshot.gpu_temperature_celsius is None
+        else _bounded_tenths(snapshot.gpu_temperature_celsius, 0, 1500)
+    )
+    network_location = (snapshot.network_location or MISSING_NETWORK_LOCATION).upper()
+    if re.fullmatch(r"[A-Z0-9?\-]{2,8}", network_location) is None:
+        network_location = MISSING_NETWORK_LOCATION
     payload = ",".join(
         (
             FRAME_PREFIX,
             str(snapshot.sequence & 0xFFFF),
             str(_bounded_tenths(snapshot.cpu_percent, 0, 1000)),
             str(_bounded_tenths(snapshot.memory_percent, 0, 1000)),
+            str(cpu_temperature),
+            str(gpu_temperature),
             str(codex_remaining),
             "1" if snapshot.codex_usage_stale else "0",
             str(max(0, min(0xFFFFFFFF, int(snapshot.download_bps)))),
             str(max(0, min(0xFFFFFFFF, int(snapshot.upload_bps)))),
+            network_location,
+            "1" if snapshot.network_location_stale else "0",
             str(max(0, min(100, int(snapshot.display_brightness_percent)))),
             str(max(0, min(100, int(snapshot.offline_brightness_percent)))),
         )
@@ -203,6 +288,220 @@ def parse_default_route_interface(output: str) -> str | None:
 def parse_windows_default_route_interface(output: str) -> str | None:
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     return lines[0] if lines else None
+
+
+def parse_smc_temperature_output(output: str) -> dict[str, float]:
+    """Parse the read-only `[SMC_KEY] value` format used by our helper and Stats."""
+    values: dict[str, float] = {}
+    for match in re.finditer(
+        r"^\[([^\]\r\n]{4})\]\s+(-?\d+(?:\.\d+)?)\s*$",
+        output,
+        flags=re.MULTILINE,
+    ):
+        value = float(match.group(2))
+        if math.isfinite(value) and 1.0 <= value <= 125.0:
+            values[match.group(1)] = value
+    return values
+
+
+def select_component_temperatures(values: Mapping[str, float]) -> tuple[float | None, float | None]:
+    """Choose the hottest useful CPU and GPU sensors from Intel or Apple Silicon SMC keys."""
+    cpu_values: list[float] = []
+    gpu_values: list[float] = []
+    for key, value in values.items():
+        if key == "TCGC" or key.startswith("TG") or re.fullmatch(r"Tg..", key):
+            gpu_values.append(value)
+        elif (key.startswith("TC") and key != "TCGC") or re.fullmatch(r"T[pe]..", key):
+            cpu_values.append(value)
+    return (
+        max(cpu_values) if cpu_values else None,
+        max(gpu_values) if gpu_values else None,
+    )
+
+
+def _bundled_smc_helper_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        candidates.append(Path(bundle_root) / MACOS_SMC_HELPER_NAME)
+    executable = Path(sys.executable).resolve()
+    candidates.append(executable.parent / MACOS_SMC_HELPER_NAME)
+    candidates.append(executable.parent.parent / "Frameworks" / MACOS_SMC_HELPER_NAME)
+    return candidates
+
+
+def macos_temperature_commands(override: str | None = None) -> list[tuple[tuple[str, ...], str]]:
+    """Return read-only SMC helpers in preference order without invoking a shell."""
+    commands: list[tuple[tuple[str, ...], str]] = []
+    candidates: list[tuple[Path, str]] = []
+    if override:
+        candidates.append((Path(override).expanduser(), "configured-smc"))
+    candidates.extend((path, "bundled-smc") for path in _bundled_smc_helper_candidates())
+    candidates.append((MACOS_STATS_SMC, "stats-smc"))
+    on_path = shutil.which("smc")
+    if on_path:
+        candidates.append((Path(on_path), "path-smc"))
+
+    seen: set[str] = set()
+    for path, source in candidates:
+        normalized = str(path)
+        if normalized in seen or not path.is_file() or not os.access(path, os.X_OK):
+            continue
+        seen.add(normalized)
+        arguments = (normalized, "list", "-t") if path.name == "smc" else (normalized,)
+        commands.append((arguments, source))
+    return commands
+
+
+def read_hardware_temperatures(
+    platform_name: str | None = None,
+    command_override: str | None = None,
+    timeout: float = DEFAULT_TEMPERATURE_TIMEOUT_SECONDS,
+) -> TemperatureSnapshot:
+    platform_name = sys.platform if platform_name is None else platform_name
+    if platform_name != "darwin":
+        return TemperatureSnapshot(error="temperature sensors are unavailable on this platform")
+
+    commands = macos_temperature_commands(command_override)
+    if not commands:
+        return TemperatureSnapshot(error="no supported macOS SMC reader found")
+
+    errors: list[str] = []
+    for command, source in commands:
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            errors.append(f"{source}: {exc}")
+            continue
+        values = parse_smc_temperature_output(result.stdout)
+        cpu, gpu = select_component_temperatures(values)
+        if cpu is None and gpu is None:
+            errors.append(f"{source}: no CPU or GPU temperature sensors")
+            continue
+        missing = []
+        if cpu is None:
+            missing.append("CPU")
+        if gpu is None:
+            missing.append("GPU")
+        return TemperatureSnapshot(
+            cpu_celsius=cpu,
+            gpu_celsius=gpu,
+            source=source,
+            sampled_at=int(time.time()),
+            error=f"{' and '.join(missing)} temperature unavailable" if missing else None,
+        )
+    return TemperatureSnapshot(error="; ".join(errors))
+
+
+def temperature_refresh_loop(
+    state: TemperatureState,
+    stop_event: threading.Event,
+    refresh_seconds: float,
+    command_override: str | None,
+) -> None:
+    while not stop_event.is_set():
+        snapshot = read_hardware_temperatures(command_override=command_override)
+        state.set(snapshot)
+        stop_event.wait(refresh_seconds)
+
+
+def network_location_initials(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    words = re.findall(r"[A-Za-z0-9]+", normalized)
+    if len(words) >= 2:
+        return "".join(word[0] for word in words[:2]).upper()
+    if words:
+        return words[0][:2].upper()
+    return ""
+
+
+def parse_ipwho_network_location(payload: Mapping[str, Any]) -> NetworkLocationSnapshot:
+    if payload.get("success") is False:
+        raise ValueError(str(payload.get("message") or "ipwho.is reported an error"))
+    country = str(payload.get("country_code") or "").strip().upper()
+    if re.fullmatch(r"[A-Z]{2}", country) is None:
+        raise ValueError("ipwho.is returned no ISO country code")
+
+    region = str(payload.get("region_code") or "").strip().upper()
+    if re.fullmatch(r"[A-Z0-9]{1,3}", region) is None:
+        region = network_location_initials(str(payload.get("city") or ""))
+    label = country if not region or region == country else f"{country}-{region}"
+    return NetworkLocationSnapshot(
+        label=label[:8],
+        stale=False,
+        source="ipwho.is",
+        sampled_at=int(time.time()),
+        error=None,
+    )
+
+
+def fetch_network_location(
+    url: str = DEFAULT_NETWORK_LOCATION_URL,
+    timeout: float = DEFAULT_NETWORK_LOCATION_TIMEOUT_SECONDS,
+) -> NetworkLocationSnapshot:
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "SmallDesktopDisplayBridge/1.9",
+            "Cache-Control": "no-cache",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            final_url = urlparse(response.geturl())
+            if final_url.scheme != "https" or final_url.hostname not in {"ipwho.is", "www.ipwho.is"}:
+                raise ValueError("network location provider redirected to an untrusted host")
+            content_length = response.headers.get("Content-Length")
+            if content_length is not None and int(content_length) > 65_536:
+                raise ValueError("network location response is too large")
+            body = response.read(65_537)
+            if len(body) > 65_536:
+                raise ValueError("network location response is too large")
+        payload = json.loads(body.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("network location response is not an object")
+        return parse_ipwho_network_location(payload)
+    except (OSError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        return NetworkLocationSnapshot(
+            source="ipwho.is",
+            sampled_at=int(time.time()),
+            error=str(exc),
+        )
+
+
+def merge_network_location(
+    previous: NetworkLocationSnapshot,
+    current: NetworkLocationSnapshot,
+) -> NetworkLocationSnapshot:
+    if current.label is not None:
+        return current
+    if previous.label is None:
+        return current
+    return replace(
+        previous,
+        stale=True,
+        sampled_at=current.sampled_at,
+        error=current.error,
+    )
+
+
+def network_location_refresh_loop(
+    state: NetworkLocationState,
+    stop_event: threading.Event,
+    refresh_seconds: float,
+    url: str,
+) -> None:
+    while not stop_event.is_set():
+        state.set(merge_network_location(state.get(), fetch_network_location(url)))
+        stop_event.wait(refresh_seconds)
 
 
 def default_route_interface_from_socket() -> str | None:
@@ -286,6 +585,8 @@ def is_night_hour(hour: int, start_hour: int, end_hour: int) -> bool:
 def sample_desktop_status_loop(
     state: DesktopStatusState,
     usage_state: codex.UsageState,
+    temperature_state: TemperatureState,
+    network_location_state: NetworkLocationState,
     stop_event: threading.Event,
     interval: float,
     network_override: str | None,
@@ -329,11 +630,21 @@ def sample_desktop_status_loop(
             night_end_hour,
         )
         usage = usage_state.get()
+        temperatures = temperature_state.get()
+        network_location = network_location_state.get()
         snapshot = DesktopStatusSnapshot(
             valid=True,
             sequence=sequence,
             cpu_percent=max(0.0, min(100.0, float(psutil.cpu_percent(interval=None)))),
             memory_percent=max(0.0, min(100.0, float(psutil.virtual_memory().percent))),
+            cpu_temperature_celsius=temperatures.cpu_celsius,
+            gpu_temperature_celsius=temperatures.gpu_celsius,
+            temperature_source=temperatures.source,
+            temperature_error=temperatures.error,
+            network_location=network_location.label,
+            network_location_stale=network_location.stale,
+            network_location_source=network_location.source,
+            network_location_error=network_location.error,
             codex_remaining_percent=usage.remaining_percent if usage.valid else None,
             codex_usage_stale=usage.stale,
             download_bps=download_bps,
@@ -519,6 +830,14 @@ def make_handler(
                         "desktop_status_ready": status.valid,
                         "mac_status_ready": status.valid,
                         "codex_usage_on_usb_ready": status.codex_remaining_percent is not None,
+                        "cpu_temperature_ready": status.cpu_temperature_celsius is not None,
+                        "gpu_temperature_ready": status.gpu_temperature_celsius is not None,
+                        "temperature_source": status.temperature_source,
+                        "temperature_error": status.temperature_error,
+                        "network_location_ready": status.network_location is not None,
+                        "network_location_stale": status.network_location_stale,
+                        "network_location_source": status.network_location_source,
+                        "network_location_error": status.network_location_error,
                         "host_platform": status.host_platform,
                         "usb": usb.as_public_dict(),
                     },
@@ -579,6 +898,43 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--serial-baud", type=int, default=DEFAULT_SERIAL_BAUD)
     parser.add_argument("--sample-seconds", type=float, default=DEFAULT_SAMPLE_SECONDS)
     parser.add_argument(
+        "--temperature-refresh-seconds",
+        type=float,
+        default=float(
+            os.getenv(
+                "DESKTOP_BRIDGE_TEMPERATURE_REFRESH_SECONDS",
+                str(DEFAULT_TEMPERATURE_REFRESH_SECONDS),
+            )
+        ),
+    )
+    parser.add_argument(
+        "--temperature-command",
+        default=os.getenv("DESKTOP_BRIDGE_TEMPERATURE_COMMAND") or None,
+        help="optional path to a read-only macOS SMC temperature helper",
+    )
+    parser.add_argument(
+        "--location-refresh-seconds",
+        type=float,
+        default=float(
+            os.getenv(
+                "DESKTOP_BRIDGE_LOCATION_REFRESH_SECONDS",
+                str(DEFAULT_NETWORK_LOCATION_REFRESH_SECONDS),
+            )
+        ),
+    )
+    parser.add_argument(
+        "--location-url",
+        default=os.getenv("DESKTOP_BRIDGE_LOCATION_URL", DEFAULT_NETWORK_LOCATION_URL),
+        help="HTTPS public-egress location endpoint (ipwho.is)",
+    )
+    parser.add_argument(
+        "--no-network-location",
+        action="store_true",
+        default=os.getenv("DESKTOP_BRIDGE_LOCATION_ENABLED", "1").strip().casefold()
+        in {"0", "false", "no", "off"},
+        help="disable public egress country/region lookup",
+    )
+    parser.add_argument(
         "--night-start-hour",
         type=int,
         default=int(os.getenv("DESKTOP_BRIDGE_NIGHT_START_HOUR", str(DEFAULT_NIGHT_START_HOUR))),
@@ -614,6 +970,13 @@ def _validate_args(args: argparse.Namespace) -> str | None:
         return "Codex refresh interval must be at least 60 seconds"
     if not 0.25 <= args.sample_seconds <= 10.0:
         return "sample interval must be between 0.25 and 10 seconds"
+    if not 2.0 <= args.temperature_refresh_seconds <= 300.0:
+        return "temperature refresh interval must be between 2 and 300 seconds"
+    if not 10.0 <= args.location_refresh_seconds <= 3600.0:
+        return "network location refresh interval must be between 10 and 3600 seconds"
+    location_url = urlparse(args.location_url)
+    if location_url.scheme != "https" or location_url.hostname not in {"ipwho.is", "www.ipwho.is"}:
+        return "network location URL must use HTTPS on ipwho.is"
     if not 1200 <= args.serial_baud <= 2_000_000:
         return "serial baud must be between 1200 and 2000000"
     if not 0 <= args.night_start_hour <= 23 or not 0 <= args.night_end_hour <= 23:
@@ -640,6 +1003,8 @@ def main(argv: list[str] | None = None) -> int:
 
     usage_state = codex.UsageState()
     status_state = DesktopStatusState()
+    temperature_state = TemperatureState()
+    network_location_state = NetworkLocationState()
     usb_state = UsbState()
     stop_event = threading.Event()
     server = codex.BridgeHTTPServer(
@@ -664,10 +1029,23 @@ def main(argv: list[str] | None = None) -> int:
             daemon=True,
         ),
         threading.Thread(
+            target=temperature_refresh_loop,
+            args=(
+                temperature_state,
+                stop_event,
+                args.temperature_refresh_seconds,
+                args.temperature_command,
+            ),
+            name="hardware-temperature-refresh",
+            daemon=True,
+        ),
+        threading.Thread(
             target=sample_desktop_status_loop,
             args=(
                 status_state,
                 usage_state,
+                temperature_state,
+                network_location_state,
                 stop_event,
                 args.sample_seconds,
                 args.network_interface,
@@ -681,6 +1059,20 @@ def main(argv: list[str] | None = None) -> int:
             daemon=True,
         ),
     ]
+    if not args.no_network_location:
+        threads.append(
+            threading.Thread(
+                target=network_location_refresh_loop,
+                args=(
+                    network_location_state,
+                    stop_event,
+                    args.location_refresh_seconds,
+                    args.location_url,
+                ),
+                name="network-location-refresh",
+                daemon=True,
+            )
+        )
     if not args.no_usb:
         threads.append(
             threading.Thread(

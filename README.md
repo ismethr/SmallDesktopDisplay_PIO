@@ -3,7 +3,7 @@
 本仓库包含两个独立的 ESP8266 NodeMCU + 240 × 240 ST7789 屏幕项目：
 
 - **天气时钟屏（仓库根目录）**：在上游 SmallDesktopDisplay 基础上修改，开机及每 30 分钟临时联网同步时间和天气，随后关闭 Wi-Fi；显示天气、室外温湿度、AQI、日期和动画。
-- **USB 系统状态屏（`mac_status_display/` 兼容目录名）**：本仓库自行开发，通过 USB 接收 macOS 或 Windows 桥接数据，显示 CPU、内存、ChatGPT/Codex 周剩余量和网速，不使用 Wi-Fi。
+- **USB 系统状态屏（`mac_status_display/` 兼容目录名）**：本仓库自行开发，通过 USB 接收 macOS 或 Windows 桥接数据，显示 CPU、内存、CPU/GPU 温度、公网出口位置、ChatGPT/Codex 周剩余量和网速，不使用 Wi-Fi。
 
 两个固件互不依赖，也不能刷到同一块屏幕上同时运行。天气屏当前版本为 **SDD 1.8.0**，使用 Arduino 框架和 PlatformIO 构建。
 
@@ -26,7 +26,7 @@
 - 可选 DHT11 室内温湿度显示；读数无效时保留上一帧而不绘制 `NaN`。
 - WiFiManager Web 配网，连接失败时开启限时配置门户；也可编译为 SmartConfig 模式。
 - 可选的局域网管理页；默认关闭，因为启用它会让天气屏保持 Wi-Fi 在线。
-- 第二块 USB 系统状态屏使用纯黑无填充卡片和中性灰虚线边界显示 CPU、内存、ChatGPT/Codex 周剩余用量及默认网卡实时速度，并按夜间/离线状态自动降低背光。
+- 第二块 USB 系统状态屏使用纯黑无填充卡片和中性灰虚线边界，以紧凑双行布局显示 CPU、内存、CPU/GPU 温度、ChatGPT/Codex 周剩余用量，并在底部三栏显示公网出口位置、下载及上传速度。
 - 配置持久化：亮度、旋转、城市、DHT 开关和 Wi-Fi 凭据。
 - 串口配置与诊断：状态、空闲堆、最大连续堆块、碎片率、亮度、城市、方向、手动联网刷新与重启。
 - 默认在启动、每 30 分钟以及手动执行 `0x08` 时临时联网；NTP 与天气请求完成后关闭 Wi-Fi 射频，不需要电脑常驻运行桥接。
@@ -76,7 +76,7 @@ http://smalldisplay-<芯片ID>.local/
 
 - 时间：`ntp.aliyun.com`、`ntp.tencent.com`、`pool.ntp.org`。固件验证响应来源、NTP 模式、stratum、时间范围和请求 cookie，不再接受明文 HTTP 时间降级。
 - 天气与城市：weather.com.cn 的 HTTP 接口。该接口不提供 TLS，因此天气数据没有传输完整性保证；失败或格式变化时保留已有画面。
-- 系统状态屏：[`tools/desktop_display_bridge`](tools/desktop_display_bridge/README.md) 使用 psutil 读取 CPU、内存与默认网卡计数，并通过本机 Codex 登录凭据获取周剩余用量。第二块屏幕只接收经过 CRC16 校验的 USB 串口帧，不使用 Wi-Fi，也不会收到 OAuth 令牌。
+- 系统状态屏：[`tools/desktop_display_bridge`](tools/desktop_display_bridge/README.md) 使用 psutil 读取 CPU、内存与默认网卡计数；macOS App 通过内置只读 AppleSMC 读取器获取 CPU/GPU 温度，通过 `ipwho.is` 获取公网出口国家/地区短标签，并通过本机 Codex App Server 获取周剩余用量。第二块屏幕只接收经过 CRC16 校验的 USB 串口帧，不使用 Wi-Fi，也不会收到 OAuth 令牌、公网 IP 或精确坐标。
 - 局域网管理页只接受设备当前子网内的连接，并使用页面令牌防止跨站表单提交；它没有账号认证，不应暴露到公网或不受信任的局域网。
 - Wi-Fi 密码存储于 ESP8266 EEPROM 模拟区，未做静态加密；具备芯片物理访问能力的人员仍可能读取。
 - 配网热点当前不设密码，但使用设备唯一 SSID 且仅在连接失败时限时开放。请在可信环境中完成首次配置。
@@ -114,7 +114,7 @@ pio device monitor -b 115200
 
 ## macOS 系统状态桥接 App
 
-第二块 USB 系统状态屏也提供无终端窗口、单实例和本地日志的 `SmallDesktopDisplayBridge.app`。它保持固件现有 `MSD3 + CRC16` 协议不变，自动发现 CH340 串口，采集 CPU、内存和默认网卡速度，并优先通过 Codex 官方 App Server 获取周剩余量。Intel 黑苹果使用 `macos-x86_64` 发布包，M 系列 Mac 使用原生 `macos-arm64` 发布包。Intel 本地构建示例：
+第二块 USB 系统状态屏也提供无终端窗口、单实例和本地日志的 `SmallDesktopDisplayBridge.app`。它使用带 CRC16 的 `MSD4` 协议，自动发现 CH340 串口，采集 CPU、内存、CPU/GPU 温度、出口国家/地区和默认网卡速度，并优先通过 Codex 官方 App Server 获取周剩余量；新版固件仍兼容旧 `MSD3` 桥接。Intel 黑苹果使用 `macos-x86_64` 发布包，M 系列 Mac 使用原生 `macos-arm64` 发布包。Intel 本地构建示例：
 
 ```bash
 python3 -m venv .venv
