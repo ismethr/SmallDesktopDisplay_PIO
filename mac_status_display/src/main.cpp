@@ -220,12 +220,20 @@ const SimpleFlag kSimpleFlags[] = {
     {{'L', 'U', '\0'}, kFlagRed, TFT_WHITE, 0x867F, false},
     {{'C', 'O', '\0'}, kFlagYellow, kFlagBlue, kFlagRed, false},
     {{'B', 'G', '\0'}, TFT_WHITE, kFlagGreen, kFlagRed, false},
+    {{'E', 'S', '\0'}, kFlagRed, kFlagYellow, kFlagRed, false},
+    {{'P', 'T', '\0'}, kFlagGreen, kFlagGreen, kFlagRed, true},
 };
 
 void drawSimpleFlag(int16_t x, int16_t y, const SimpleFlag &flag) {
   constexpr int16_t kWidth = 22;
   constexpr int16_t kHeight = 12;
-  if (flag.vertical) {
+  if (flag.vertical && flag.first == flag.second) {
+    display.fillRect(x, y, 9, kHeight, flag.first);
+    display.fillRect(x + 9, y, 13, kHeight, flag.third);
+  } else if (flag.vertical && flag.second == flag.third) {
+    display.fillRect(x, y, 13, kHeight, flag.first);
+    display.fillRect(x + 13, y, 9, kHeight, flag.second);
+  } else if (flag.vertical) {
     display.fillRect(x, y, 7, kHeight, flag.first);
     display.fillRect(x + 7, y, 8, kHeight, flag.second);
     display.fillRect(x + 15, y, 7, kHeight, flag.third);
@@ -264,6 +272,24 @@ void drawCountryFlag(int16_t x, int16_t y, const char country[3], bool stale) {
     display.drawPixel(innerX + 10, innerY + 2, kFlagYellow);
     display.drawPixel(innerX + 11, innerY + 5, kFlagYellow);
     display.drawPixel(innerX + 9, innerY + 8, kFlagYellow);
+  } else if (strcmp(country, "HK") == 0) {
+    display.fillRect(innerX, innerY, 22, 12, kFlagRed);
+    display.fillCircle(innerX + 11, innerY + 3, 1, TFT_WHITE);
+    display.fillCircle(innerX + 14, innerY + 5, 1, TFT_WHITE);
+    display.fillCircle(innerX + 13, innerY + 8, 1, TFT_WHITE);
+    display.fillCircle(innerX + 9, innerY + 8, 1, TFT_WHITE);
+    display.fillCircle(innerX + 8, innerY + 5, 1, TFT_WHITE);
+  } else if (strcmp(country, "TW") == 0) {
+    display.fillRect(innerX, innerY, 22, 12, kFlagRed);
+    display.fillRect(innerX, innerY, 10, 7, kFlagDarkBlue);
+    display.fillCircle(innerX + 5, innerY + 3, 2, TFT_WHITE);
+  } else if (strcmp(country, "SG") == 0) {
+    display.fillRect(innerX, innerY, 22, 6, kFlagRed);
+    display.fillRect(innerX, innerY + 6, 22, 6, TFT_WHITE);
+    display.fillCircle(innerX + 5, innerY + 3, 3, TFT_WHITE);
+    display.fillCircle(innerX + 6, innerY + 2, 2, kFlagRed);
+    display.drawPixel(innerX + 10, innerY + 2, TFT_WHITE);
+    display.drawPixel(innerX + 12, innerY + 4, TFT_WHITE);
   } else if (strcmp(country, "JP") == 0) {
     display.fillRect(innerX, innerY, 22, 12, TFT_WHITE);
     display.fillCircle(innerX + 11, innerY + 6, 4, kFlagRed);
@@ -303,6 +329,16 @@ void drawCountryFlag(int16_t x, int16_t y, const char country[3], bool stale) {
     display.fillRect(innerX, innerY + 4, 22, 4, TFT_WHITE);
     display.fillRect(innerX, innerY + 8, 22, 4, kFlagGreen);
     display.drawCircle(innerX + 11, innerY + 6, 2, kFlagBlue);
+  } else if (strcmp(country, "AU") == 0 || strcmp(country, "NZ") == 0) {
+    display.fillRect(innerX, innerY, 22, 12, kFlagDarkBlue);
+    display.fillRect(innerX + 4, innerY, 2, 7, TFT_WHITE);
+    display.fillRect(innerX, innerY + 2, 10, 2, TFT_WHITE);
+    display.fillRect(innerX + 4, innerY, 1, 7, kFlagRed);
+    display.fillRect(innerX, innerY + 3, 10, 1, kFlagRed);
+    const uint16_t starColor = strcmp(country, "NZ") == 0 ? kFlagRed : TFT_WHITE;
+    display.fillCircle(innerX + 16, innerY + 3, 1, starColor);
+    display.fillCircle(innerX + 19, innerY + 7, 1, starColor);
+    display.fillCircle(innerX + 14, innerY + 9, 1, starColor);
   } else {
     bool matched = false;
     for (const SimpleFlag &flag : kSimpleFlags) {
