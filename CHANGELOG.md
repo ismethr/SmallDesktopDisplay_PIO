@@ -24,8 +24,8 @@
 - 天气屏默认改为只在启动或串口手动刷新时联网，完成 NTP/天气请求后关闭 Wi-Fi；局域网管理页改为显式可选构建。
 - Windows 天气屏模拟器同步恢复湿度控制和湿度资源，项目说明明确区分上游衍生天气屏与自研 USB 系统状态屏。
 - 新增无控制台窗口、单实例和本地日志的 Windows 单文件桥接 EXE 入口、可重复 PyInstaller 构建脚本及 GitHub Actions 构建产物。
-- 新增可双击无窗口、无 Dock 图标后台运行、单实例和本地日志的 macOS App 打包及 GitHub Actions 产物，支持 Intel 黑苹果 `x86_64` 构建且保持现有 `MSD3` 固件协议不变。
-- 新增 Apple Silicon `arm64` 原生 macOS App 构建，并自动将 Intel、Apple Silicon 和 Windows 桥接程序发布到带版本号的 GitHub Release。
+- 新增可双击无窗口、无 Dock 图标后台运行、单实例和本地日志的 macOS App 打包及 GitHub Actions 产物，支持 `x86_64` 构建且保持现有 `MSD3` 固件协议不变。
+- 新增 `arm64` 原生 macOS App 构建，并自动将 macOS `x86_64`、macOS `arm64` 和 Windows 桥接程序发布到带版本号的 GitHub Release。
 - Codex 周用量默认优先通过官方本机 App Server 的 `account/rateLimits/read` 获取，不再要求桥接直接解析 OAuth 凭据；旧客户端仍可自动兼容。
 
 ## 1.6.3 - 2026-08-22

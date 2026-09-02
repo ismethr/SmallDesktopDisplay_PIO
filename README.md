@@ -9,7 +9,7 @@
 
 MiniDisplay 是一块通过 USB 驱动的桌面系统状态小屏，沿用 ESP8266 NodeMCU 和 240 × 240 ST7789 硬件，不需要改变原项目的屏幕接线。电脑端的 **MiniDisplay Bridge（迷你屏桥接）** 在后台采集系统状态，再通过 USB 串口发送到屏幕；小屏本身不连接 Wi-Fi，也不保存电脑账号或 Codex 凭据。
 
-Intel 黑苹果、普通 Intel Mac、Apple Silicon Mac 和 Windows 都可以使用。桥接程序无主窗口、无 Dock 常驻图标，并会自动发现常见的 CH340 USB 串口。
+macOS 端提供 `x86_64` 与 `arm64` 两种原生构建，Windows 端提供 x64 构建。桥接程序无主窗口、无 Dock 常驻图标，并会自动发现常见的 CH340 USB 串口。
 
 ## 小屏能显示什么
 
@@ -34,7 +34,7 @@ ESP8266 NodeMCU → 240 × 240 ST7789 小屏
 ```
 
 1. 按原接线组装 NodeMCU 与 ST7789，并刷入 [`mac_status_display`](mac_status_display/README.md) 固件。
-2. 根据电脑架构安装 [MiniDisplay Bridge](tools/desktop_display_bridge/README.md)：Intel 黑苹果使用 `x86_64`，M 系列 Mac 使用 `arm64`，Windows 使用 x64 EXE。
+2. 根据电脑架构安装 [MiniDisplay Bridge](tools/desktop_display_bridge/README.md)：x86 平台使用 `x86_64` 构建，ARM 平台使用 `arm64` 构建，Windows 使用 x64 EXE。
 3. 接入 USB 后桥接程序会自动连接串口；屏幕断开或重新插入时无需重启电脑端程序。
 
 USB 帧只包含经过范围检查的系统指标、地区短标签和剩余百分比，不包含 OAuth 令牌、公网 IP、精确坐标或 Wi-Fi 密码。详细协议、诊断接口和构建方法见 [USB 状态屏说明](mac_status_display/README.md) 与 [桥接程序说明](tools/desktop_display_bridge/README.md)。
@@ -151,7 +151,7 @@ pio device monitor -b 115200
 
 ## macOS 系统状态桥接 App
 
-第二块 USB 系统状态屏提供无终端窗口、单实例和本地日志的 **MiniDisplay Bridge（迷你屏桥接）** App。它使用带 CRC16 的 `MSD4` 协议，自动发现 CH340 串口，采集 CPU、内存、CPU/GPU 温度、出口国家/地区和默认网卡速度，并优先通过 Codex 官方 App Server 获取周剩余量；新版固件仍兼容旧 `MSD3` 桥接。Intel 黑苹果使用 `macos-x86_64` 发布包，M 系列 Mac 使用原生 `macos-arm64` 发布包。Intel 本地构建示例：
+第二块 USB 系统状态屏提供无终端窗口、单实例和本地日志的 **MiniDisplay Bridge（迷你屏桥接）** App。它使用带 CRC16 的 `MSD4` 协议，自动发现 CH340 串口，采集 CPU、内存、CPU/GPU 温度、出口国家/地区和默认网卡速度，并优先通过 Codex 官方 App Server 获取周剩余量；新版固件仍兼容旧 `MSD3` 桥接。x86 平台使用 `macos-x86_64` 发布包，ARM 平台使用原生 `macos-arm64` 发布包。`x86_64` 本地构建示例：
 
 ```bash
 python3 -m venv .venv
