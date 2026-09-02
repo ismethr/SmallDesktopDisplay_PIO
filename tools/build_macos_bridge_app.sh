@@ -6,6 +6,7 @@ repository_root="${script_dir:h}"
 bridge_directory="${repository_root}/tools/desktop_display_bridge"
 launcher="${bridge_directory}/macos_bridge_launcher.py"
 smc_source="${bridge_directory}/macos_smc_temperature.c"
+icon_path="${bridge_directory}/assets/MiniDisplayBridgeIcon.icns"
 build_root="${repository_root}/build/macos_bridge_app"
 helper_directory="${build_root}/helpers"
 smc_binary="${helper_directory}/SmallDesktopDisplaySMC"
@@ -15,7 +16,8 @@ spec_directory="${build_root}/spec"
 pyinstaller_config_directory="${build_root}/pyinstaller-config"
 python_command="${PYTHON:-${repository_root}/.venv/bin/python}"
 target_arch="${MACOS_BRIDGE_ARCH:-$(uname -m)}"
-release_version="${BRIDGE_VERSION:-1.9.0}"
+release_version="${BRIDGE_VERSION:-1.9.1}"
+product_name="MiniDisplay Bridge"
 
 if [[ ! -x "${python_command}" ]]; then
   print -u2 "Python was not found: ${python_command}"
@@ -28,6 +30,10 @@ if [[ ! -f "${launcher}" ]]; then
 fi
 if [[ ! -f "${smc_source}" ]]; then
   print -u2 "macOS SMC temperature helper source was not found: ${smc_source}"
+  exit 2
+fi
+if [[ ! -f "${icon_path}" ]]; then
+  print -u2 "macOS app icon was not found: ${icon_path}"
   exit 2
 fi
 if [[ "${target_arch}" != "x86_64" && "${target_arch}" != "arm64" && "${target_arch}" != "universal2" ]]; then
@@ -89,7 +95,8 @@ fi
   --clean \
   --windowed \
   --onedir \
-  --name SmallDesktopDisplayBridge \
+  --name "${product_name}" \
+  --icon "${icon_path}" \
   --osx-bundle-identifier io.github.ismethr.SmallDesktopDisplayBridge \
   --target-arch "${target_arch}" \
   --distpath "${dist_directory}" \
@@ -102,7 +109,7 @@ fi
   --add-data "${bridge_directory}/THIRD_PARTY_NOTICES.md:." \
   "${launcher}"
 
-app_path="${dist_directory}/SmallDesktopDisplayBridge.app"
+app_path="${dist_directory}/${product_name}.app"
 if [[ ! -d "${app_path}" ]]; then
   print -u2 "Expected app bundle was not produced: ${app_path}"
   exit 1
@@ -118,6 +125,12 @@ fi
 if ! /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "${info_plist}" 2>/dev/null; then
   /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "${info_plist}"
 fi
+if ! /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${product_name}" "${info_plist}" 2>/dev/null; then
+  /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${product_name}" "${info_plist}"
+fi
+if ! /usr/libexec/PlistBuddy -c "Set :CFBundleName ${product_name}" "${info_plist}" 2>/dev/null; then
+  /usr/libexec/PlistBuddy -c "Add :CFBundleName string ${product_name}" "${info_plist}"
+fi
 if [[ "$(plutil -extract LSUIElement raw -o - "${info_plist}")" != "true" ]]; then
   print -u2 "Failed to mark the app as a background UI agent"
   exit 1
@@ -130,5 +143,5 @@ ditto -c -k --sequesterRsrc --keepParent "${app_path}" "${archive_path}"
 
 print "macOS bridge app: ${app_path}"
 print "archive: ${archive_path}"
-file "${app_path}/Contents/MacOS/SmallDesktopDisplayBridge"
+file "${app_path}/Contents/MacOS/${product_name}"
 shasum -a 256 "${archive_path}"

@@ -20,7 +20,7 @@ CPU、内存和网卡计数统一由 [psutil](https://github.com/giampaolo/psuti
 
 ### 可双击的后台 App（推荐）
 
-GitHub Release 提供两种不依赖系统 Python 的原生 App：Intel Mac/黑苹果使用 `SmallDesktopDisplayBridge-macos-x86_64.zip`，M1/M2/M3/M4 等 Apple Silicon Mac 使用 `SmallDesktopDisplayBridge-macos-arm64.zip`。解压后将 App 拖入“应用程序”，双击即可无窗口、无 Dock 图标地在后台运行；重复启动不会产生第二个实例。它会自动识别唯一的 CH340/USB 串口，包括本项目常见的 `/dev/cu.usbserial-*`。
+macOS App 的正式名称是 **MiniDisplay Bridge（迷你屏桥接）**。GitHub Release 提供两种不依赖系统 Python 的原生 App：Intel Mac/黑苹果使用 `SmallDesktopDisplayBridge-macos-x86_64.zip`，M1/M2/M3/M4 等 Apple Silicon Mac 使用 `SmallDesktopDisplayBridge-macos-arm64.zip`。解压后将 `MiniDisplay Bridge.app` 拖入“应用程序”，双击即可无窗口、无 Dock 图标地在后台运行；重复启动不会产生第二个实例。它会自动识别唯一的 CH340/USB 串口，包括本项目常见的 `/dev/cu.usbserial-*`。
 
 运行日志位于：
 
@@ -28,7 +28,7 @@ GitHub Release 提供两种不依赖系统 Python 的原生 App：Intel Mac/黑�
 ~/Library/Logs/SmallDesktopDisplay/bridge.log
 ```
 
-可在浏览器打开 `http://127.0.0.1:8766/health` 检查 USB、硬件采集与 Codex 用量状态。要开机自动运行，可在“系统设置 → 通用 → 登录项”中添加 `SmallDesktopDisplayBridge.app`；要停止可在“活动监视器”结束同名进程。
+可在浏览器打开 `http://127.0.0.1:8766/health` 检查 USB、硬件采集与 Codex 用量状态。要开机自动运行，可在“系统设置 → 通用 → 登录项”中添加 `MiniDisplay Bridge.app`；要停止可在“活动监视器”结束 `MiniDisplay Bridge` 进程。
 
 社区构建使用临时签名而非 Apple Developer ID。首次运行下载的发布包时，请在 Finder 中右键 App 并选择“打开”；不要运行来源不明的同名程序。
 
@@ -38,7 +38,7 @@ Intel 黑苹果应使用 `macos-x86_64` 发布包。Apple Silicon 从源码构�
 python3 -m venv .venv
 .venv/bin/python -m pip install -r tools/desktop_display_bridge/requirements-build.txt
 MACOS_BRIDGE_ARCH=x86_64 ./tools/build_macos_bridge_app.sh
-open build/macos_bridge_app/dist/SmallDesktopDisplayBridge.app
+open "build/macos_bridge_app/dist/MiniDisplay Bridge.app"
 ```
 
 构建结果同时包含可直接运行的 `.app` 和便于传输的 ZIP，位于 `build/macos_bridge_app/`。
