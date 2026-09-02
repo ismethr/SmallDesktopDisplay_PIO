@@ -1,11 +1,49 @@
-# SmallDesktopDisplay：天气屏与系统状态屏
+<p align="center">
+  <img src="tools/desktop_display_bridge/assets/MiniDisplayBridgeIcon.png" width="190" alt="MiniDisplay 图标">
+</p>
 
-本仓库包含两个独立的 ESP8266 NodeMCU + 240 × 240 ST7789 屏幕项目：
+<h1 align="center">MiniDisplay</h1>
 
-- **天气时钟屏（仓库根目录）**：在上游 SmallDesktopDisplay 基础上修改，开机及每 30 分钟临时联网同步时间和天气，随后关闭 Wi-Fi；显示天气、室外温湿度、AQI、日期和动画。
-- **USB 系统状态屏（`mac_status_display/` 兼容目录名）**：本仓库自行开发，通过 USB 接收 macOS 或 Windows 桥接数据，显示 CPU、内存、CPU/GPU 温度、公网出口位置、ChatGPT/Codex 周剩余量和网速，不使用 Wi-Fi。
+<p align="center"><strong>把 CPU、温度、网速和 Codex 余量放到桌面上。</strong></p>
+<p align="center">ESP8266 · 240 × 240 ST7789 · USB-only · macOS / Windows</p>
 
-两个固件互不依赖，也不能刷到同一块屏幕上同时运行。天气屏当前版本为 **SDD 1.8.0**，使用 Arduino 框架和 PlatformIO 构建。
+MiniDisplay 是一块通过 USB 驱动的桌面系统状态小屏，沿用 ESP8266 NodeMCU 和 240 × 240 ST7789 硬件，不需要改变原项目的屏幕接线。电脑端的 **MiniDisplay Bridge（迷你屏桥接）** 在后台采集系统状态，再通过 USB 串口发送到屏幕；小屏本身不连接 Wi-Fi，也不保存电脑账号或 Codex 凭据。
+
+Intel 黑苹果、普通 Intel Mac、Apple Silicon Mac 和 Windows 都可以使用。桥接程序无主窗口、无 Dock 常驻图标，并会自动发现常见的 CH340 USB 串口。
+
+## 小屏能显示什么
+
+| 区域 | 显示内容 |
+| --- | --- |
+| 系统负载 | CPU 使用率、内存使用率和进度条 |
+| 硬件温度 | macOS CPU 最热点与 GPU 温度；取不到时明确显示 `--°C` |
+| Codex 余量 | ChatGPT/Codex 周剩余百分比、进度条与数据陈旧状态 |
+| 网络状态 | 公网出口国旗和地区缩写、默认网卡实时下载与上传速度 |
+| 连接状态 | USB 在线/断线提示、自动重连，以及日间、夜间和断线亮度 |
+
+界面使用纯黑底、紧凑双行系统卡片和底部三栏布局，适合放在显示器旁边长期查看，不需要切换电脑窗口。
+
+## 它如何工作
+
+```text
+macOS / Windows
+       ↓  MiniDisplay Bridge
+USB 串口（MSD4 + CRC16）
+       ↓
+ESP8266 NodeMCU → 240 × 240 ST7789 小屏
+```
+
+1. 按原接线组装 NodeMCU 与 ST7789，并刷入 [`mac_status_display`](mac_status_display/README.md) 固件。
+2. 根据电脑架构安装 [MiniDisplay Bridge](tools/desktop_display_bridge/README.md)：Intel 黑苹果使用 `x86_64`，M 系列 Mac 使用 `arm64`，Windows 使用 x64 EXE。
+3. 接入 USB 后桥接程序会自动连接串口；屏幕断开或重新插入时无需重启电脑端程序。
+
+USB 帧只包含经过范围检查的系统指标、地区短标签和剩余百分比，不包含 OAuth 令牌、公网 IP、精确坐标或 Wi-Fi 密码。详细协议、诊断接口和构建方法见 [USB 状态屏说明](mac_status_display/README.md) 与 [桥接程序说明](tools/desktop_display_bridge/README.md)。
+
+## 仓库中的天气时钟固件
+
+本仓库还保留一套独立的天气时钟固件（仓库根目录）：它在上游 SmallDesktopDisplay 基础上修改，开机及每 30 分钟临时联网同步时间和天气，随后关闭 Wi-Fi，显示天气、室外温湿度、AQI、日期和动画。
+
+天气时钟和 USB 系统状态屏使用相同接线，但属于两套互不依赖的固件，不能刷到同一块屏幕上同时运行。天气屏当前版本为 **SDD 1.8.0**，使用 Arduino 框架和 PlatformIO 构建。
 
 > **修改版声明（2026-08-22）：** 本仓库是在
 > [KittenCN/SmallDesktopDisplay_PIO](https://github.com/KittenCN/SmallDesktopDisplay_PIO)
@@ -15,7 +53,7 @@
 
 本项目与 OpenAI 不存在隶属、赞助或背书关系。ChatGPT/Codex 名称与图形只用于说明兼容的数据来源和界面功能。
 
-## 功能
+## 天气时钟固件功能
 
 - 24 小时时钟、分钟与秒钟显示；NTP 成功后固定显示“月日 + 星期”，不再轮播日期页。
 - 时间屏将保存的亮度作为日间亮度；NTP 有效后每天 00:00–07:00 自动降至 10%，早上自动恢复，日间设置低于 10% 时夜间不会反向调亮。
@@ -26,7 +64,6 @@
 - 可选 DHT11 室内温湿度显示；读数无效时保留上一帧而不绘制 `NaN`。
 - WiFiManager Web 配网，连接失败时开启限时配置门户；也可编译为 SmartConfig 模式。
 - 可选的局域网管理页；默认关闭，因为启用它会让天气屏保持 Wi-Fi 在线。
-- 第二块 USB 系统状态屏使用纯黑无填充卡片和中性灰虚线边界，以紧凑双行布局显示 CPU、内存、CPU/GPU 温度、ChatGPT/Codex 周剩余用量，并在底部三栏显示公网出口位置、下载及上传速度。
 - 配置持久化：亮度、旋转、城市、DHT 开关和 Wi-Fi 凭据。
 - 串口配置与诊断：状态、空闲堆、最大连续堆块、碎片率、亮度、城市、方向、手动联网刷新与重启。
 - 默认在启动、每 30 分钟以及手动执行 `0x08` 时临时联网；NTP 与天气请求完成后关闭 Wi-Fi 射频，不需要电脑常驻运行桥接。
