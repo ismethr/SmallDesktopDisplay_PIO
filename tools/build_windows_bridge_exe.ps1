@@ -65,6 +65,7 @@ $arguments = @(
     '--paths', $bridgeDirectory,
     '--paths', (Join-Path $repositoryRoot 'tools\codex_usage_bridge'),
     '--hidden-import', 'codex_usage_bridge',
+    '--add-data', ((Join-Path $bridgeDirectory 'assets') + ':assets'),
     '--version-file', $versionInfo,
     $launcher
 )

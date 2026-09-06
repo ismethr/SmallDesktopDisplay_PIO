@@ -10,7 +10,8 @@
 - 当前默认上网接口的下载、上传速度
 - USB 在线/断线状态
 - 纯黑无填充卡片与中性灰虚线边界
-- 紧凑双行系统卡片：负载、温度、进度条在同一区域对齐显示；底部三栏显示位置、下载和上传
+- CPU 与内存并排大字显示，温度独立成行；Codex 使用独立卡片，底部三栏显示位置、下载和上传
+- 只重绘变化的指标，减少刷新闪烁；等待时显示 `--`，Codex 用 `WAITING` / `REMAINING` / `CACHED` 区分等待、有效与缓存数据
 - 自动节能亮度：默认 00:00–07:00 为 10%，白天 50%，数据断开后 5%
 
 接线和第一块天气时钟相同：SCK GPIO14、MOSI GPIO13、CS GPIO15、DC GPIO0、RST GPIO2、背光 GPIO5。串口固定为 115200 baud。
@@ -32,6 +33,14 @@ pio run -d mac_status_display -e esp12e -t upload --upload-port COM7
 ```bash
 pio test -d mac_status_display -e native_test
 ```
+
+macOS / Linux 上可在首次固件构建后检查真实绘图代码的布局：
+
+```bash
+sh tools/preview_status_screen.sh
+```
+
+检查程序复用固件的绘图函数和 TFT_eSPI 实际字库，验证文字重叠、画布越界、数值极限、重复帧不重绘、断线及恢复状态，在 `build/status_preview/` 输出 PPM 预览。它不模拟 SPI、屏幕面板色序或背光，不能代替实机颜色验收；国旗仍沿用已在实机确认的颜色校正。
 
 屏幕不保存账号、Wi-Fi 密码、Codex 数据或公网 IP，只接收统一桥接提供的系统指标、`国家-地区` 短标签、剩余百分比和陈旧标志。`MSD4` 串口帧经过 CRC16、长度、版本、字段数和范围检查；固件也兼容缺少温度与位置字段的 `MSD3` 帧。数据中断后保留最后一组数值、显示 `USB LOST` 并降低背光，重新连接后由统一后台按当前时段自动恢复。
 

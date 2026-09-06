@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MiniDisplay Bridge · 连接状态</title>
+<link rel="icon" href="/icon.png">
+<style>
+:root{color-scheme:dark;font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#e5eded;background:#0b1012}
+*{box-sizing:border-box}body{margin:0}main{max-width:1000px;margin:0 auto;padding:44px 28px 32px}
+header{display:flex;align-items:center;gap:18px;margin-bottom:30px}header img{width:76px;height:76px}h1{font-size:26px;letter-spacing:-.7px;margin:0}p{margin:0;color:#97a8ae}header small{margin-left:auto;color:#81949b}
+.connection{display:flex;gap:22px;align-items:center;border:1px solid #29463e;background:#12211d;border-radius:18px;padding:24px;margin-bottom:22px}.dot{flex:none;width:11px;height:11px;background:#69ddae;border-radius:50%;box-shadow:0 0 18px #69ddae44}.connection h2{font-size:18px;margin:0 0 4px}.connection p{font-size:13px}.connection.warn{background:#242016;border-color:#635135}.warn .dot{background:#edbf72;box-shadow:none}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{background:#11191d;border:1px solid #263339;border-radius:18px;padding:24px;min-width:0}.label{font-size:12px;letter-spacing:1.4px;color:#91a7af;margin-bottom:12px}.value{font-size:44px;line-height:1.15;font-weight:600;letter-spacing:-1.5px;font-variant-numeric:tabular-nums}.unit{font-size:18px;font-weight:400;letter-spacing:0;color:#8c9fa7;margin-left:5px}.pair{display:flex;gap:24px;justify-content:space-between}.pair>div{min-width:0}.caption{font-size:12px;color:#93a5ad;margin-top:10px}.bar{height:5px;background:#263339;border-radius:5px;overflow:hidden;margin-top:18px}.bar span{display:block;background:#6bdcb6;height:100%;width:0;transition:width .4s}.bar.cached span{background:#c4a76d}.details{margin-top:18px;display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:#a7b8be}.details b{color:#deeaed;font-weight:500}.network .value{font-size:30px;letter-spacing:-.7px}.badge{font-size:11px;padding:3px 8px;border-radius:20px;background:#213630;color:#83d6b8;float:right;letter-spacing:0}.badge.cached{background:#3b3222;color:#f0c985}.help{margin-top:24px;padding:20px 24px;border-left:2px solid #30434b;background:#0e1619;border-radius:0 12px 12px 0}.help strong{font-size:13px}.help p{font-size:13px;margin-top:5px}footer{display:flex;justify-content:space-between;gap:16px;margin-top:28px;font-size:12px;color:#728a94}a{color:#9ecbbd;text-decoration:none}a:hover{text-decoration:underline}button{border:1px solid #405650;border-radius:8px;background:#1c2e27;color:#d4ece2;padding:8px 14px;font:inherit;cursor:pointer;margin-left:auto;white-space:nowrap}button:hover{background:#294538}button:disabled{opacity:.5;cursor:wait}
+@media(max-width:620px){main{padding:24px 16px}header{gap:12px}header img{width:58px;height:58px}h1{font-size:21px}header small{display:none}.grid{grid-template-columns:1fr}.connection{padding:18px;gap:12px;flex-wrap:wrap}.connection button{margin-left:23px}.card{padding:20px}.value{font-size:38px}footer{flex-direction:column;gap:4px}}
+</style>
+<main>
+  <header><img src="/icon.png" alt="MiniDisplay"><div><h1>MiniDisplay Bridge</h1><p>电脑与桌面小屏的连接中心</p></div><small id="version">本机状态</small></header>
+  <section class="connection warn" id="connection" aria-live="polite"><span class="dot"></span><div><h2 id="connection-title">正在读取连接状态…</h2><p id="connection-detail">系统指标每秒更新，Codex 与网络位置按各自周期刷新。</p></div><button id="refresh" type="button">刷新状态</button></section>
+  <div class="grid">
+    <section class="card"><div class="label">SYSTEM / 系统负载</div><div class="pair"><div><div class="value"><span id="cpu">--</span><span class="unit">%</span></div><div class="caption">CPU 使用率</div></div><div><div class="value"><span id="memory">--</span><span class="unit">%</span></div><div class="caption">内存使用率</div></div></div><div class="details"><span>CPU 温度 <b id="cpu-temp">--</b></span><span>GPU 温度 <b id="gpu-temp">--</b></span></div></section>
+    <section class="card"><div class="label">CODEX / 本周余量 <span class="badge cached" id="usage-badge">等待数据</span></div><div class="value"><span id="usage">--</span><span class="unit">%</span></div><div class="bar" id="usage-bar"><span></span></div><div class="caption" id="usage-detail">读取当前登录账号的周限额</div></section>
+    <section class="card network"><div class="label">NETWORK / 实时速率</div><div class="pair"><div><div class="value" id="download">--</div><div class="caption">↓ 下载</div></div><div><div class="value" id="upload">--</div><div class="caption">↑ 上传</div></div></div><div class="details"><span>默认网卡 <b id="interface">--</b></span></div></section>
+    <section class="card network"><div class="label">DISPLAY / 小屏状态</div><div class="value" id="location">--</div><div class="caption" id="location-detail">公网出口位置</div><div class="details"><span>亮度 <b id="brightness">--</b></span><span>模式 <b id="mode">--</b></span></div></section>
+  </div>
+  <aside class="help"><strong id="help-title">连接提示</strong><p id="help-text">连接一块 USB 状态屏后会自动识别。多个 USB 串口同时连接时，需要明确指定状态屏端口。</p></aside>
+  <footer><span id="updated">等待首次同步</span><span>本机只读面板 · <a href="/health">诊断信息</a></span></footer>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const text=(id,value)=>{$(id).textContent=value;};
+let busy=false, lastSuccess=0;
+const number=value=>typeof value==='number'&&Number.isFinite(value);
+const percent=value=>number(value)?Math.max(0,Math.min(100,value)).toFixed(0):'--';
+const temperature=value=>number(value)?value.toFixed(0)+' °C':'--';
+function rate(value){if(!number(value))return '--';let unit=0;const units=['B/s','KB/s','MB/s','GB/s'];while(value>=1024&&unit<3){value/=1024;unit++;}return (value>=100||unit===0?value.toFixed(0):value.toFixed(1))+' '+units[unit];}
+function flag(location){const country=(location||'').split('-')[0];return /^[A-Z]{2}$/.test(country)?String.fromCodePoint(...[...country].map(c=>127397+c.charCodeAt(0)))+' ':'';}
+function moment(seconds){return number(seconds)?new Date(seconds*1000).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'--';}
+function render(data){
+ const d=data.desktop,u=data.usage,usb=data.usb;
+ const active=usb.connected&&d.ok&&number(usb.last_sent_at)&&Date.now()/1000-usb.last_sent_at<5;
+ $('connection').classList.toggle('warn',!active);
+ const titles={waiting:'等待 USB 小屏',connecting:'正在建立 USB 连接',retrying:'连接中断，正在重试','waiting-data':'等待系统数据',disabled:'仅采集模式',stopped:'桥接已停止'};
+ const explanations={waiting:'请连接 USB 数据线，程序会自动识别状态屏。',connecting:'正在等待设备就绪，通常需要两秒。',retrying:'USB 可能已断开或被其他程序占用，正在自动重试。','waiting-data':'系统采集暂不可用，正在重新采集。',disabled:'当前只读取电脑状态，没有向 USB 小屏发送数据。',stopped:'请重新打开 MiniDisplay Bridge。'};
+ text('connection-title',active?'小屏已连接 · 正在发送数据':titles[usb.phase]||'连接暂不可用');
+ text('connection-detail',active?'端口 '+(usb.port||'--')+' · 系统数据持续发送':(usb.error||'').includes('multiple')?'检测到多个 USB 串口，请在启动参数中指定状态屏端口。':explanations[usb.phase]||'请稍候，程序会自动尝试恢复连接。');
+ text('version','v'+data.version+' · '+(d.host_platform==='Darwin'?'macOS':d.host_platform));
+ text('cpu',d.ok?percent(d.cpu_percent):'--');text('memory',d.ok?percent(d.memory_percent):'--');
+ text('cpu-temp',d.ok?temperature(d.cpu_temperature_celsius):'--');text('gpu-temp',d.ok?temperature(d.gpu_temperature_celsius):'--');
+ text('usage',u.ok?percent(u.remaining_percent):'--');text('usage-badge',u.ok?(u.stale?'上次数据':'已同步'):'等待数据');
+ $('usage-badge').classList.toggle('cached',!u.ok||u.stale);$('usage-bar').classList.toggle('cached',u.stale);
+ $('usage-bar').firstElementChild.style.width=(u.ok?percent(u.remaining_percent):'0')+'%';
+ text('usage-detail',u.ok?(u.stale?'更新暂不可用，保留上次余量。':'下次重置 '+moment(u.reset_at))+' · 更新于 '+moment(u.fetched_at):'暂未取得余量，请确认 Codex 已登录且网络可用。');
+ text('download',rate(d.ok?d.download_bps:null));text('upload',rate(d.ok?d.upload_bps:null));text('interface',d.interface||'--');
+ text('location',flag(d.network_location)+(d.network_location||'--'));text('location-detail',d.network_location_stale?'公网出口位置 · 上次数据':'公网出口位置');
+ text('brightness',d.ok?d.display_brightness_percent+'%':'--');text('mode',d.ok?(d.night_mode?'夜间调暗':'日间'):'--');
+ text('help-title',active?'连接正常':usb.phase==='disabled'?'仅采集模式':'恢复连接');
+ text('help-text',active?'此页面自动刷新。Codex 或位置服务暂不可用时，其余系统指标会继续发送；USB 重新插入后会自动重连。':usb.phase==='disabled'?'以默认参数启动桥接程序，即可启用 USB 输出。当前页面展示电脑端采集的数据。':'检查 USB 数据线及设备供电，并关闭正在占用该串口的烧录工具或串口监视器。多个串口同时连接时，在启动参数中指定状态屏端口。');
+ text('updated','页面同步于 '+new Date().toLocaleTimeString('zh-CN'));
+}
+async function refresh(){
+ if(busy)return;busy=true;$('refresh').disabled=true;
+ const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),3500);
+ try{const response=await fetch('/v1/overview',{cache:'no-store',signal:controller.signal});if(!response.ok)throw Error();const data=await response.json();render(data);lastSuccess=Date.now();}
+ catch{$('connection').classList.add('warn');text('connection-title','暂时联系不上桥接程序');text('connection-detail','请打开 MiniDisplay Bridge；恢复后此页面会自动重新同步。');text('updated',lastSuccess?'连接中断 · 页面保留上次显示':'尚未连接到本机服务');}
+ finally{clearTimeout(timeout);busy=false;$('refresh').disabled=false;}
+}
+$('refresh').addEventListener('click',refresh);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});setInterval(()=>{if(!document.hidden)refresh();},1000);refresh();
+</script>
+</html>

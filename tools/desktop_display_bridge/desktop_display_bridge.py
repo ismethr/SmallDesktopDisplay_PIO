@@ -55,6 +55,8 @@ DEFAULT_NETWORK_LOCATION_REFRESH_SECONDS = 30.0
 DEFAULT_NETWORK_LOCATION_TIMEOUT_SECONDS = 8.0
 DEFAULT_NETWORK_LOCATION_URL = "https://ipwho.is/"
 DEFAULT_RECONNECT_SECONDS = 2.0
+DEFAULT_SAMPLE_MAX_AGE_SECONDS = 15.0
+ASSET_DIRECTORY = Path(__file__).resolve().parent / "assets"
 DEFAULT_NIGHT_START_HOUR = 0
 DEFAULT_NIGHT_END_HOUR = 7
 DEFAULT_DAY_BRIGHTNESS = 50
@@ -122,21 +124,22 @@ class DesktopStatusState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._snapshot = DesktopStatusSnapshot()
+        self._updated_at = time.monotonic()
 
-    def get(self) -> DesktopStatusSnapshot:
+    def get(self, max_age: float = DEFAULT_SAMPLE_MAX_AGE_SECONDS) -> DesktopStatusSnapshot:
         with self._lock:
+            if self._snapshot.valid and time.monotonic() - self._updated_at > max_age:
+                return replace(self._snapshot, valid=False, error="system sample expired; retrying")
             return self._snapshot
 
     def set(self, snapshot: DesktopStatusSnapshot) -> None:
         with self._lock:
             self._snapshot = snapshot
+            self._updated_at = time.monotonic()
 
     def set_error(self, message: str) -> None:
         with self._lock:
-            if self._snapshot.valid:
-                self._snapshot = replace(self._snapshot, error=message)
-            else:
-                self._snapshot = DesktopStatusSnapshot(error=message)
+            self._snapshot = replace(self._snapshot, valid=False, error=message)
 
 
 # Compatibility aliases for code importing the names used by the original
@@ -151,6 +154,7 @@ class UsbSnapshot:
     port: str | None = None
     last_sent_at: int | None = None
     error: str | None = "waiting for USB display"
+    phase: str = "waiting"
 
     def as_public_dict(self) -> dict[str, Any]:
         return {
@@ -158,6 +162,7 @@ class UsbSnapshot:
             "port": Path(self.port).name if self.port else None,
             "last_sent_at": self.last_sent_at,
             "error": self.error,
+            "phase": self.phase,
         }
 
 
@@ -582,7 +587,7 @@ def is_night_hour(hour: int, start_hour: int, end_hour: int) -> bool:
     return hour >= start_hour or hour < end_hour
 
 
-def sample_desktop_status_loop(
+def _sample_desktop_status_loop(
     state: DesktopStatusState,
     usage_state: codex.UsageState,
     temperature_state: TemperatureState,
@@ -658,6 +663,30 @@ def sample_desktop_status_loop(
         )
         state.set(snapshot)
         sequence = (sequence + 1) & 0xFFFF
+
+
+def sample_desktop_status_loop(
+    state: DesktopStatusState,
+    usage_state: codex.UsageState,
+    temperature_state: TemperatureState,
+    network_location_state: NetworkLocationState,
+    stop_event: threading.Event,
+    *settings: Any,
+) -> None:
+    # Drivers and route helpers can fail transiently after sleep or an adapter
+    # change. Invalidate the old sample and start a fresh rate baseline.
+    while not stop_event.is_set():
+        try:
+            _sample_desktop_status_loop(
+                state, usage_state, temperature_state, network_location_state,
+                stop_event, *settings,
+            )
+            return
+        except Exception as exc:
+            state.set_error("system sampling failed; retrying")
+            print(f"[desktop-bridge] system sampling failed: {type(exc).__name__}",
+                  file=sys.stderr, flush=True)
+            stop_event.wait(1.0)
 
 
 sample_mac_status_loop = sample_desktop_status_loop
@@ -742,6 +771,16 @@ def serial_writer_loop(
     active = None
     last_sequence: int | None = None
     last_error: str | None = None
+    last_write_at = 0.0
+
+    def close_active() -> None:
+        nonlocal active
+        if active is not None:
+            try:
+                active.close()
+            except (OSError, serial.SerialException):
+                pass
+            active = None
 
     while not stop_event.is_set():
         if active is None:
@@ -754,19 +793,22 @@ def serial_writer_loop(
                 stop_event.wait(reconnect_seconds)
                 continue
             try:
-                active = serial.Serial(port, baudrate=baud, timeout=0.2, write_timeout=1.0)
+                usb_state.set(UsbSnapshot(port=port, phase="connecting", error=None))
+                active = serial.Serial(port=None, baudrate=baud, timeout=0.2, write_timeout=1.0)
+                # Set control lines before opening to avoid unnecessary resets.
                 active.dtr = False
                 active.rts = False
+                active.port = port
+                active.open()
                 active.reset_input_buffer()
-                stop_event.wait(2.0)  # ESP8266 boards commonly reset when the port opens.
-                usb_state.set(UsbSnapshot(connected=True, port=port, error=None))
-                print(f"[desktop-bridge] USB display connected: {port}", file=sys.stderr, flush=True)
+                if stop_event.wait(2.0):  # Allow boards that reset on open to boot.
+                    break
                 last_error = None
                 last_sequence = None
             except (OSError, serial.SerialException) as exc:
-                active = None
+                close_active()
                 message = f"cannot open USB display: {exc}"
-                usb_state.set(UsbSnapshot(port=port, error="cannot open USB display"))
+                usb_state.set(UsbSnapshot(port=port, phase="retrying", error="cannot open USB display"))
                 if message != last_error:
                     print(f"[desktop-bridge] {message}", file=sys.stderr, flush=True)
                     last_error = message
@@ -774,34 +816,41 @@ def serial_writer_loop(
                 continue
 
         snapshot = status_state.get()
-        if not snapshot.valid or snapshot.sequence == last_sequence:
+        if not snapshot.valid:
+            usb_state.set(UsbSnapshot(port=active.port, phase="waiting-data", error=snapshot.error))
+            stop_event.wait(0.1)
+            continue
+        if snapshot.sequence == last_sequence and time.monotonic() - last_write_at < 1.0:
             stop_event.wait(0.1)
             continue
         try:
-            active.write(encode_status_frame(snapshot))
-            active.flush()
+            frame = encode_status_frame(snapshot)
+            if active.write(frame) != len(frame):
+                raise serial.SerialException("incomplete USB frame")
+            # write_timeout bounds writes; flush()/tcdrain can block indefinitely
+            # on a disconnected adapter. Do not drain it synchronously.
+            if last_sequence is None:
+                print(f"[desktop-bridge] USB display connected: {active.port}", file=sys.stderr, flush=True)
             last_sequence = snapshot.sequence
+            last_write_at = time.monotonic()
             usb_state.set(
                 UsbSnapshot(
                     connected=True,
                     port=active.port,
                     last_sent_at=int(time.time()),
                     error=None,
+                    phase="streaming",
                 )
             )
         except (OSError, serial.SerialException) as exc:
             port = getattr(active, "port", None)
-            try:
-                active.close()
-            except (OSError, serial.SerialException):
-                pass
-            active = None
-            usb_state.set(UsbSnapshot(port=port, error="USB display disconnected"))
+            close_active()
+            usb_state.set(UsbSnapshot(port=port, phase="retrying", error="USB display disconnected"))
             print(f"[desktop-bridge] USB display disconnected: {exc}", file=sys.stderr, flush=True)
             stop_event.wait(reconnect_seconds)
 
-    if active is not None:
-        active.close()
+    close_active()
+    usb_state.set(UsbSnapshot(phase="stopped", error="bridge stopped"))
 
 
 def make_handler(
@@ -814,7 +863,24 @@ def make_handler(
 
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             path = self.path.split("?", 1)[0]
-            if path == "/v1/codex-usage":
+            if path in {"/", "/icon.png"}:
+                filename = "dashboard.html" if path == "/" else "MiniDisplayBridgeIcon.png"
+                content_type = "text/html; charset=utf-8" if path == "/" else "image/png"
+                try:
+                    body = (ASSET_DIRECTORY / filename).read_bytes()
+                except OSError:
+                    self._send_json({"ok": False, "error": "dashboard asset unavailable"}, HTTPStatus.NOT_FOUND)
+                    return
+                self._send_body(body, content_type, HTTPStatus.OK)
+            elif path == "/v1/overview":
+                status = status_state.get()
+                self._send_json({
+                    "app": "MiniDisplay Bridge", "version": "1.10.0",
+                    "desktop": status.as_public_dict(),
+                    "usb": usb_state.get().as_public_dict(),
+                    "usage": usage_state.get().as_public_dict(),
+                }, HTTPStatus.OK)
+            elif path == "/v1/codex-usage":
                 self._send_json(usage_state.get().as_public_dict(), HTTPStatus.OK)
             elif path in {"/v1/desktop-status", "/v1/mac-status"}:
                 self._send_json(status_state.get().as_public_dict(), HTTPStatus.OK)
@@ -829,9 +895,9 @@ def make_handler(
                         "usage_stale": usage.stale,
                         "desktop_status_ready": status.valid,
                         "mac_status_ready": status.valid,
-                        "codex_usage_on_usb_ready": status.codex_remaining_percent is not None,
-                        "cpu_temperature_ready": status.cpu_temperature_celsius is not None,
-                        "gpu_temperature_ready": status.gpu_temperature_celsius is not None,
+                        "codex_usage_on_usb_ready": status.valid and usb.connected and status.codex_remaining_percent is not None,
+                        "cpu_temperature_ready": status.valid and status.cpu_temperature_celsius is not None,
+                        "gpu_temperature_ready": status.valid and status.gpu_temperature_celsius is not None,
                         "temperature_source": status.temperature_source,
                         "temperature_error": status.temperature_error,
                         "network_location_ready": status.network_location is not None,
@@ -848,14 +914,21 @@ def make_handler(
 
         def _send_json(self, payload: Mapping[str, Any], status: HTTPStatus) -> None:
             body = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+            self._send_body(body, "application/json", status)
+
+        def _send_body(self, body: bytes, content_type: str, status: HTTPStatus) -> None:
             self.send_response(status.value)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", content_type)
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
 
         def log_message(self, fmt: str, *args: Any) -> None:
+            if len(args) > 1 and str(args[1]) == "200":
+                return  # A dashboard polling every second must not grow the log.
             print(f"[desktop-bridge] {self.client_address[0]} {fmt % args}", file=sys.stderr)
 
     return Handler
@@ -1006,6 +1079,8 @@ def main(argv: list[str] | None = None) -> int:
     temperature_state = TemperatureState()
     network_location_state = NetworkLocationState()
     usb_state = UsbState()
+    if args.no_usb:
+        usb_state.set(UsbSnapshot(phase="disabled", error="USB output disabled"))
     stop_event = threading.Event()
     server = codex.BridgeHTTPServer(
         (args.listen_host, args.listen_port),

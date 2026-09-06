@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import os
+import json
 import tempfile
+import threading
 import unittest
+import urllib.request
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -38,7 +42,123 @@ class Port:
         self.product = ""
 
 
+class SimulatedStop:
+    """Advance the worker clock without sleeping or touching a physical port."""
+
+    def __init__(self, end: float) -> None:
+        self.now = 0.0
+        self.end = end
+
+    def is_set(self) -> bool:
+        return self.now >= self.end
+
+    def wait(self, seconds: float) -> bool:
+        self.now += seconds
+        return self.is_set()
+
+
 class DesktopDisplayBridgeTests(unittest.TestCase):
+    def test_expired_system_sample_is_invalid_and_new_sample_recovers(self) -> None:
+        with mock.patch.object(bridge.time, "monotonic", return_value=10) as clock:
+            state = bridge.DesktopStatusState()
+            state.set(bridge.DesktopStatusSnapshot(valid=True, cpu_percent=42))
+            clock.return_value = 26
+            self.assertFalse(state.get().valid)
+            self.assertEqual(42, state.get().cpu_percent)
+            state.set(bridge.DesktopStatusSnapshot(valid=True, cpu_percent=23))
+            self.assertTrue(state.get().valid)
+            state.set_error("sampling failed")
+            self.assertFalse(state.get().valid)
+
+    def test_sampler_retries_after_driver_error(self) -> None:
+        state = bridge.DesktopStatusState()
+        state.set(bridge.DesktopStatusSnapshot(valid=True))
+        stop = SimulatedStop(5)
+        with mock.patch.object(bridge, "_sample_desktop_status_loop", side_effect=[OSError(), None]) as sample:
+            bridge.sample_desktop_status_loop(
+                state, bridge.codex.UsageState(), bridge.TemperatureState(),
+                bridge.NetworkLocationState(), stop,
+            )
+        self.assertEqual(2, sample.call_count)
+        self.assertFalse(state.get().valid)
+
+    def run_serial_scenario(self, port: mock.Mock, *, end: float = 5) -> tuple[list, SimulatedStop]:
+        stop = SimulatedStop(end)
+        updates = []
+        usb = bridge.UsbState()
+        with mock.patch.object(bridge.time, "monotonic", side_effect=lambda: stop.now):
+            state = bridge.DesktopStatusState()
+            state.set(bridge.DesktopStatusSnapshot(valid=True, sequence=1))
+            backend = SimpleNamespace(Serial=mock.Mock(return_value=port), SerialException=OSError)
+            with mock.patch.object(bridge, "serial", backend), mock.patch.object(
+                bridge, "discover_serial_port", return_value=("COM7", None)
+            ), mock.patch.object(usb, "set", side_effect=updates.append):
+                bridge.serial_writer_loop(state, usb, stop, "COM7", 115200)
+            backend.Serial.assert_called_with(port=None, baudrate=115200, timeout=0.2, write_timeout=1.0)
+        return updates, stop
+
+    def test_serial_keepalive_stops_when_sample_expires(self) -> None:
+        port = mock.Mock()
+        port.write.side_effect = lambda frame: len(frame)
+        updates, stop = self.run_serial_scenario(port, end=18)
+        self.assertGreater(port.write.call_count, 5)
+        self.assertLess(port.write.call_count, 16)
+        self.assertIn("waiting-data", [u.phase for u in updates])
+        self.assertTrue(any(u.connected and u.phase == "streaming" for u in updates))
+        port.flush.assert_not_called()
+        port.close.assert_called_once()
+        self.assertFalse(port.dtr)
+        self.assertFalse(port.rts)
+
+    def test_serial_partial_write_reconnects_and_never_reports_streaming(self) -> None:
+        port = mock.Mock()
+        port.write.return_value = 1
+        updates, _ = self.run_serial_scenario(port, end=7)
+        self.assertTrue(any(u.phase == "retrying" for u in updates))
+        self.assertFalse(any(u.connected for u in updates))
+        self.assertGreaterEqual(port.open.call_count, 2)
+        self.assertEqual(port.open.call_count, port.close.call_count)
+
+    def test_serial_setup_failure_closes_descriptor(self) -> None:
+        port = mock.Mock()
+        port.reset_input_buffer.side_effect = OSError("device removed")
+        updates, _ = self.run_serial_scenario(port)
+        self.assertEqual(port.open.call_count, port.close.call_count)
+        self.assertFalse(any(u.connected for u in updates))
+        port.write.assert_not_called()
+
+    def test_stop_during_device_boot_closes_without_writing(self) -> None:
+        port = mock.Mock()
+        self.run_serial_scenario(port, end=1)
+        port.close.assert_called_once()
+        port.write.assert_not_called()
+
+    def test_dashboard_serves_local_assets_and_sanitized_overview(self) -> None:
+        handler = bridge.make_handler(bridge.codex.UsageState(), bridge.DesktopStatusState(), bridge.UsbState())
+        server = bridge.codex.BridgeHTTPServer(("127.0.0.1", 0), handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        base = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with urllib.request.urlopen(base + "/") as response:
+                self.assertIn("MiniDisplay Bridge", response.read().decode())
+                self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+            with urllib.request.urlopen(base + "/icon.png") as response:
+                self.assertTrue(response.read().startswith(b"\x89PNG"))
+            with urllib.request.urlopen(base + "/v1/overview") as response:
+                payload = json.load(response)
+                self.assertFalse(payload["desktop"]["ok"])
+                self.assertEqual("waiting", payload["usb"]["phase"])
+                self.assertNotIn("access_token", str(payload))
+            with self.assertRaises(urllib.error.HTTPError) as failure:
+                urllib.request.urlopen(base + "/../desktop_display_bridge.py")
+            self.assertEqual(404, failure.exception.code)
+            failure.exception.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=2)
+
     def test_crc_matches_standard_check_value(self) -> None:
         self.assertEqual(0x29B1, bridge.crc16_ccitt(b"123456789"))
 

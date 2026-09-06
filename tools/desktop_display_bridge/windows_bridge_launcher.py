@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TextIO
 
 
-APP_NAME = "SmallDesktopDisplay Bridge"
+APP_NAME = "MiniDisplay Bridge"
 MUTEX_NAME = "Local\\SmallDesktopDisplayBridge-9E5B3921"
 ERROR_ALREADY_EXISTS = 183
 

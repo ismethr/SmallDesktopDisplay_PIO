@@ -41,10 +41,14 @@ bool offlineDrawn = false;
 uint32_t lastValidFrameAt = 0;
 uint8_t currentBrightness = 255;
 uint8_t offlineBrightness = kDefaultOfflineBrightness;
+bool hasFrame = false;
+macstatus::StatusFrame previousFrame;
 
 void drawCodexUsage(int16_t remainingTenths, bool stale);
-void drawMetricRow(int16_t top, const char *loadLabel, uint16_t loadTenths,
-                   const char *temperatureLabel, int16_t temperatureTenths);
+void drawLoad(int16_t x, const char *label, int16_t tenths);
+void drawTemperature(int16_t x, const char *label, int16_t tenths);
+void drawNetwork(uint32_t download, uint32_t upload, const char *location,
+                 bool locationStale);
 
 void drawDashedHorizontalLine(int16_t x, int16_t y, int16_t length,
                               uint16_t color) {
@@ -106,27 +110,32 @@ void drawStaticInterface() {
   display.setTextFont(2);
   display.setTextSize(1);
   display.setTextColor(TFT_WHITE, kBackground);
-  display.drawString("SYSTEM STATUS", 10, 18);
-  display.drawFastHLine(8, 35, 224, kPanelBorder);
+  display.drawString("MINIDISPLAY", 10, 18);
+  display.drawFastHLine(8, 32, 224, kPanelBorder);
 
-  drawDashedBorder(8, 44, 224, 87, kPanelBorder);
-  drawDashedHorizontalLine(14, 87, 212, kPanelBorder);
-  drawMetricRow(48, "CPU LOAD", 0, "CPU TEMP", macstatus::kMissingTemperature);
-  drawMetricRow(91, "MEMORY", 0, "GPU TEMP", macstatus::kMissingTemperature);
+  drawDashedBorder(8, 40, 224, 94, kPanelBorder);
+  drawDashedVerticalLine(120, 48, 78, kPanelBorder);
+  drawDashedHorizontalLine(16, 105, 208, kPanelBorder);
+  drawLoad(16, "CPU", -1);
+  drawLoad(132, "MEMORY", -1);
+  drawTemperature(16, "CPU", macstatus::kMissingTemperature);
+  drawTemperature(132, "GPU", macstatus::kMissingTemperature);
 
-  drawDashedBorder(8, 138, 224, 42, kPanelBorder);
+  drawDashedBorder(8, 141, 224, 45, kPanelBorder);
   drawCodexUsage(macstatus::kMissingCodexUsage, false);
 
-  drawDashedBorder(8, 188, 224, 44, kPanelBorder);
+  drawDashedBorder(8, 193, 224, 39, kPanelBorder);
   display.setTextFont(1);
+  display.setTextDatum(TL_DATUM);
   display.setTextColor(kGreen, kBackground);
-  display.drawString("LOCATION", 16, 196);
+  display.drawString("EXIT", 16, 198);
   display.setTextColor(kBlue, kBackground);
-  display.drawString("DOWN", 94, 196);
+  display.drawString("DOWN", 94, 198);
   display.setTextColor(kPurple, kBackground);
-  display.drawString("UP", 170, 196);
-  drawDashedVerticalLine(82, 194, 31, kPanelBorder);
-  drawDashedVerticalLine(157, 194, 31, kPanelBorder);
+  display.drawString("UP", 170, 198);
+  drawDashedVerticalLine(82, 199, 27, kPanelBorder);
+  drawDashedVerticalLine(157, 199, 27, kPanelBorder);
+  drawNetwork(0, 0, "--", false);
   drawConnectionStatus("WAITING", kYellow);
 }
 
@@ -142,43 +151,47 @@ uint16_t temperatureColor(int16_t tenths) {
   return kGreen;
 }
 
-void drawMetricRow(int16_t top, const char *loadLabel, uint16_t loadTenths,
-                   const char *temperatureLabel, int16_t temperatureTenths) {
-  display.fillRect(14, top, 212, 36, kBackground);
-  drawDashedVerticalLine(140, top + 5, 27, kPanelBorder);
-
+void drawLoad(int16_t x, const char *label, int16_t tenths) {
+  display.fillRect(x, 47, 92, 55, kBackground);
   display.setTextDatum(TL_DATUM);
   display.setTextFont(1);
   display.setTextSize(1);
   display.setTextColor(kMuted, kBackground);
-  display.drawString(loadLabel, 18, top + 1);
-  display.setTextDatum(TR_DATUM);
-  display.drawString(temperatureLabel, 219, top + 1);
-
+  display.drawString(label, x, 48);
   char loadValue[8];
-  snprintf(loadValue, sizeof(loadValue), "%u%%",
-           static_cast<unsigned>((loadTenths + 5U) / 10U));
-  display.setTextDatum(TL_DATUM);
+  if (tenths < 0) snprintf(loadValue, sizeof(loadValue), "--");
+  else snprintf(loadValue, sizeof(loadValue), "%u%%",
+                static_cast<unsigned>((tenths + 5) / 10));
   display.setTextFont(2);
-  display.setTextSize(1);
+  display.setTextSize(2);
   display.setTextColor(TFT_WHITE, kBackground);
-  display.drawString(loadValue, 18, top + 12);
-  drawProgressBar(18, top + 30, 112, loadTenths, loadColor(loadTenths));
+  display.drawString(loadValue, x, 59);
+  display.setTextSize(1);
+  drawProgressBar(x, 94, 92, tenths < 0 ? 0 : tenths,
+                  tenths < 0 ? kMuted : loadColor(tenths));
+}
 
-  const bool validTemperature = temperatureTenths != macstatus::kMissingTemperature;
-  const uint16_t color = validTemperature ? temperatureColor(temperatureTenths) : kMuted;
+void drawTemperature(int16_t x, const char *label, int16_t tenths) {
+  display.fillRect(x, 110, 92, 18, kBackground);
+  display.setTextSize(1);
+  display.setTextFont(1);
+  display.setTextDatum(ML_DATUM);
+  display.setTextColor(kMuted, kBackground);
+  display.drawString(label, x, 119);
+  const bool validTemperature = tenths != macstatus::kMissingTemperature;
+  const uint16_t color = validTemperature ? temperatureColor(tenths) : kMuted;
   char temperatureValue[10];
   if (validTemperature) {
     snprintf(temperatureValue, sizeof(temperatureValue), "%d`C",
-             static_cast<int>((temperatureTenths + 5) / 10));
+             static_cast<int>((tenths + 5) / 10));
   } else {
     snprintf(temperatureValue, sizeof(temperatureValue), "--`C");
   }
-  display.setTextDatum(TR_DATUM);
+  display.setTextDatum(MR_DATUM);
   display.setTextFont(2);
   display.setTextSize(1);
   display.setTextColor(color, kBackground);
-  display.drawString(temperatureValue, 219, top + 12);
+  display.drawString(temperatureValue, x + 92, 119);
 }
 
 void formatRate(uint32_t bytesPerSecond, char *output, size_t outputSize) {
@@ -402,14 +415,16 @@ void drawCodexUsage(int16_t remainingTenths, bool stale) {
     color = remainingTenths >= 400 ? kGreen : (remainingTenths >= 150 ? kYellow : kRed);
   }
 
-  display.fillRect(14, 144, 212, 30, kBackground);
-  drawChatGptIcon(17, 147, valid && !stale ? TFT_WHITE : kMuted);
+  display.fillRect(14, 145, 212, 36, kBackground);
+  drawChatGptIcon(17, 151, valid && !stale ? TFT_WHITE : kMuted);
 
   display.setTextDatum(ML_DATUM);
   display.setTextFont(1);
   display.setTextSize(1);
   display.setTextColor(stale ? kMuted : TFT_WHITE, kBackground);
-  display.drawString("CODEX LEFT", 49, 152);
+  display.drawString("CODEX WEEK", 49, 150);
+  display.setTextColor(kMuted, kBackground);
+  display.drawString(!valid ? "WAITING" : (stale ? "CACHED" : "REMAINING"), 49, 162);
 
   char value[8];
   if (valid) {
@@ -420,13 +435,14 @@ void drawCodexUsage(int16_t remainingTenths, bool stale) {
   }
   display.setTextDatum(MR_DATUM);
   display.setTextFont(2);
-  display.setTextSize(1);
+  display.setTextSize(2);
   display.setTextColor(valid && !stale ? TFT_WHITE : kMuted, kBackground);
-  display.drawString(value, 218, 152);
+  display.drawString(value, 221, 162);
+  display.setTextSize(1);
 
   constexpr int16_t kBarX = 49;
-  constexpr int16_t kBarY = 165;
-  constexpr int16_t kBarWidth = 169;
+  constexpr int16_t kBarY = 173;
+  constexpr int16_t kBarWidth = 94;
   display.drawRoundRect(kBarX, kBarY, kBarWidth, 7, 3, kPanelBorder);
   if (valid && remainingTenths > 0) {
     const int16_t filled = static_cast<int16_t>(
@@ -448,31 +464,53 @@ void drawNetwork(uint32_t download, uint32_t upload, const char *location,
   formatRate(download, downText, sizeof(downText));
   formatRate(upload, upText, sizeof(upText));
   splitNetworkLocation(location, country, locationDetail);
-  display.fillRect(14, 205, 64, 21, kBackground);
-  display.fillRect(86, 205, 67, 21, kBackground);
-  display.fillRect(161, 205, 65, 21, kBackground);
-  drawCountryFlag(15, 208, country, locationStale);
+  if (!hasFrame || offlineDrawn || strcmp(location, previousFrame.networkLocation) != 0 ||
+      locationStale != previousFrame.networkLocationStale) {
+    display.fillRect(14, 208, 64, 19, kBackground);
+    drawCountryFlag(15, 211, country, locationStale);
+    display.setTextDatum(MC_DATUM);
+    display.setTextFont(2);
+    display.setTextSize(1);
+    display.setTextColor(locationStale ? kMuted : TFT_WHITE, kBackground);
+    display.drawString(locationDetail, 61, 217);
+  }
+  display.fillRect(86, 208, 67, 19, kBackground);
+  display.fillRect(161, 208, 65, 19, kBackground);
   display.setTextDatum(MC_DATUM);
   display.setTextFont(2);
   display.setTextSize(1);
-  display.setTextColor(locationStale ? kMuted : TFT_WHITE, kBackground);
-  display.drawString(locationDetail, 61, 215);
   display.setTextColor(TFT_WHITE, kBackground);
-  display.drawString(downText, 119, 217);
-  display.drawString(upText, 194, 217);
+  if (display.textWidth(downText) > 65) display.setTextFont(1);
+  display.drawString(hasFrame ? downText : "--", 119, 218);
+  display.setTextFont(2);
+  if (display.textWidth(upText) > 63) display.setTextFont(1);
+  display.drawString(hasFrame ? upText : "--", 194, 218);
 }
 
 void drawFrame(const macstatus::StatusFrame &frame) {
   offlineBrightness = frame.offlineBrightnessPercent;
   applyBrightness(frame.brightnessPercent);
-  drawMetricRow(48, "CPU LOAD", frame.cpuTenths, "CPU TEMP",
-                frame.cpuTemperatureTenths);
-  drawMetricRow(91, "MEMORY", frame.memoryTenths, "GPU TEMP",
-                frame.gpuTemperatureTenths);
-  drawCodexUsage(frame.codexRemainingTenths, frame.codexUsageStale);
-  drawNetwork(frame.downloadBytesPerSecond, frame.uploadBytesPerSecond,
-              frame.networkLocation, frame.networkLocationStale);
-  drawConnectionStatus("USB LIVE", kGreen);
+  const bool refresh = !hasFrame || offlineDrawn;
+  if (refresh || frame.cpuTenths != previousFrame.cpuTenths)
+    drawLoad(16, "CPU", frame.cpuTenths);
+  if (refresh || frame.memoryTenths != previousFrame.memoryTenths)
+    drawLoad(132, "MEMORY", frame.memoryTenths);
+  if (refresh || frame.cpuTemperatureTenths != previousFrame.cpuTemperatureTenths)
+    drawTemperature(16, "CPU", frame.cpuTemperatureTenths);
+  if (refresh || frame.gpuTemperatureTenths != previousFrame.gpuTemperatureTenths)
+    drawTemperature(132, "GPU", frame.gpuTemperatureTenths);
+  if (refresh || frame.codexRemainingTenths != previousFrame.codexRemainingTenths ||
+      frame.codexUsageStale != previousFrame.codexUsageStale)
+    drawCodexUsage(frame.codexRemainingTenths, frame.codexUsageStale);
+  hasFrame = true;
+  if (refresh || frame.downloadBytesPerSecond != previousFrame.downloadBytesPerSecond ||
+      frame.uploadBytesPerSecond != previousFrame.uploadBytesPerSecond ||
+      strcmp(frame.networkLocation, previousFrame.networkLocation) != 0 ||
+      frame.networkLocationStale != previousFrame.networkLocationStale)
+    drawNetwork(frame.downloadBytesPerSecond, frame.uploadBytesPerSecond,
+                frame.networkLocation, frame.networkLocationStale);
+  if (refresh) drawConnectionStatus("USB LIVE", kGreen);
+  previousFrame = frame;
   offlineDrawn = false;
 }
 
@@ -528,7 +566,8 @@ void setup() {
 void loop() {
   readSerialFrames();
   if (!offlineDrawn && millis() - lastValidFrameAt > kOfflineAfterMs) {
-    drawConnectionStatus("USB LOST", kRed);
+    drawConnectionStatus(hasFrame ? "USB LOST" : "WAITING", hasFrame ? kRed : kYellow);
+    if (hasFrame) drawCodexUsage(previousFrame.codexRemainingTenths, true);
     applyBrightness(offlineBrightness);
     offlineDrawn = true;
   }

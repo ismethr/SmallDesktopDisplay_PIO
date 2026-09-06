@@ -28,7 +28,9 @@ macOS App 的正式名称是 **MiniDisplay Bridge（迷你屏桥接）**。GitHu
 ~/Library/Logs/SmallDesktopDisplay/bridge.log
 ```
 
-可在浏览器打开 `http://127.0.0.1:8766/health` 检查 USB、硬件采集与 Codex 用量状态。要开机自动运行，可在“系统设置 → 通用 → 登录项”中添加 `MiniDisplay Bridge.app`；要停止可在“活动监视器”结束 `MiniDisplay Bridge` 进程。
+可在浏览器打开 [本机状态页面](http://127.0.0.1:8766/)，查看 USB 连接、CPU/内存、温度、网速、出口位置以及 Codex 余量和更新时间。页面每秒自动刷新，宽窗口并排显示，窄窗口自动单列排列；“刷新状态”只重新读取本机数据，不会额外请求 Codex 或位置服务。原有 `/health` 诊断接口继续保留。
+
+要开机自动运行，可在“系统设置 → 通用 → 登录项”中添加 `MiniDisplay Bridge.app`；要停止可在“活动监视器”结束 `MiniDisplay Bridge` 进程。
 
 社区构建使用临时签名而非 Apple Developer ID。首次运行下载的发布包时，请在 Finder 中右键 App 并选择“打开”；不要运行来源不明的同名程序。
 
@@ -70,7 +72,7 @@ DESKTOP_BRIDGE_SERIAL_PORT=/dev/cu.usbserial-2140 \
 %LOCALAPPDATA%\SmallDesktopDisplay\logs\bridge.log
 ```
 
-可在浏览器打开 `http://127.0.0.1:8766/health` 检查状态。要停止后台程序，可在任务管理器结束 `SmallDesktopDisplayBridge.exe`，或执行：
+可在浏览器打开 [本机状态页面](http://127.0.0.1:8766/) 检查状态。要停止后台程序，可在任务管理器结束 `SmallDesktopDisplayBridge.exe`，或执行：
 
 ```powershell
 Get-Process SmallDesktopDisplayBridge -ErrorAction SilentlyContinue | Stop-Process
@@ -129,8 +131,17 @@ USB 状态屏不需要入站网络访问，建议使用 `--listen-host 127.0.0.1
 
 同名命令行参数优先于环境变量；执行 `desktop_display_bridge.py --help` 可查看完整列表。
 
-诊断接口：
+连接与数据恢复：
 
+- USB 成功写出完整数据帧后才标记为已连接；写入超时、短写或初始化失败时会释放串口并重试。此状态表示电脑端发送成功，不代表设备返回了确认帧。
+- 系统采集出现异常时自动重试，并重新建立网速计数基线；超过 15 秒未更新的系统快照不再发送，小屏随后进入断线状态，避免把旧值当成实时数据。
+- 新采样间隔较长时，每秒重复发送仍有效的快照，避免正常采样间隔触发小屏断线；Codex 和位置数据继续保留各自的陈旧标志。
+- 本机状态页面只读，不加载远程字体或脚本；正常的自动刷新不会持续增加访问日志。
+
+页面与诊断接口：
+
+- `/`：MiniDisplay Bridge 本机状态页面。
+- `/v1/overview`：页面使用的系统、USB 与 Codex 汇总数据，不包含凭据。
 - `/health`：Codex、桌面状态和 USB 连接是否就绪。
 - `/v1/desktop-status`：浏览器可读的最新桌面状态，用于排错。
 - `/v1/mac-status`：保留的旧版兼容路径，内容与 `/v1/desktop-status` 相同。

@@ -66,6 +66,8 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install platformio==6.1.18
       - run: pio run -d mac_status_display -e esp12e
+      - name: Check actual status-screen layout and reconnect states
+        run: sh tools/preview_status_screen.sh
 
   desktop-bridge-windows:
     runs-on: windows-latest
