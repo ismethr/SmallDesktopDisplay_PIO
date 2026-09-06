@@ -11,10 +11,12 @@ header{display:flex;align-items:center;gap:18px;margin-bottom:30px}header img{wi
 .connection{display:flex;gap:22px;align-items:center;border:1px solid #29463e;background:#12211d;border-radius:18px;padding:24px;margin-bottom:22px}.dot{flex:none;width:11px;height:11px;background:#69ddae;border-radius:50%;box-shadow:0 0 18px #69ddae44}.connection h2{font-size:18px;margin:0 0 4px}.connection p{font-size:13px}.connection.warn{background:#242016;border-color:#635135}.warn .dot{background:#edbf72;box-shadow:none}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{background:#11191d;border:1px solid #263339;border-radius:18px;padding:24px;min-width:0}.label{font-size:12px;letter-spacing:1.4px;color:#91a7af;margin-bottom:12px}.value{font-size:44px;line-height:1.15;font-weight:600;letter-spacing:-1.5px;font-variant-numeric:tabular-nums}.unit{font-size:18px;font-weight:400;letter-spacing:0;color:#8c9fa7;margin-left:5px}.pair{display:flex;gap:24px;justify-content:space-between}.pair>div{min-width:0}.caption{font-size:12px;color:#93a5ad;margin-top:10px}.bar{height:5px;background:#263339;border-radius:5px;overflow:hidden;margin-top:18px}.bar span{display:block;background:#6bdcb6;height:100%;width:0;transition:width .4s}.bar.cached span{background:#c4a76d}.details{margin-top:18px;display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:#a7b8be}.details b{color:#deeaed;font-weight:500}.network .value{font-size:30px;letter-spacing:-.7px}.badge{font-size:11px;padding:3px 8px;border-radius:20px;background:#213630;color:#83d6b8;float:right;letter-spacing:0}.badge.cached{background:#3b3222;color:#f0c985}.help{margin-top:24px;padding:20px 24px;border-left:2px solid #30434b;background:#0e1619;border-radius:0 12px 12px 0}.help strong{font-size:13px}.help p{font-size:13px;margin-top:5px}footer{display:flex;justify-content:space-between;gap:16px;margin-top:28px;font-size:12px;color:#728a94}a{color:#9ecbbd;text-decoration:none}a:hover{text-decoration:underline}button{border:1px solid #405650;border-radius:8px;background:#1c2e27;color:#d4ece2;padding:8px 14px;font:inherit;cursor:pointer;margin-left:auto;white-space:nowrap}button:hover{background:#294538}button:disabled{opacity:.5;cursor:wait}
 @media(max-width:620px){main{padding:24px 16px}header{gap:12px}header img{width:58px;height:58px}h1{font-size:21px}header small{display:none}.grid{grid-template-columns:1fr}.connection{padding:18px;gap:12px;flex-wrap:wrap}.connection button{margin-left:23px}.card{padding:20px}.value{font-size:38px}footer{flex-direction:column;gap:4px}}
+.connection-actions{display:flex;gap:10px;margin-left:auto;align-items:center;flex-wrap:wrap}.connection-actions button{margin:0}.button-link{border:1px solid #405650;border-radius:8px;padding:8px 14px;white-space:nowrap;font-size:15px}.settings{margin-top:24px;scroll-margin-top:20px}.settings h2{font-size:20px;margin:0}.settings-heading{display:flex;align-items:center;gap:16px;margin-bottom:24px}.settings-heading p{font-size:13px}.settings-heading button{font-size:13px}.settings fieldset{padding:0;margin:0;border:0;min-width:0}.settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.setting{min-width:0}.setting label{display:block;font-size:14px;color:#dce8eb;margin-bottom:10px}.setting output{float:right;color:#80dfb8;font-variant-numeric:tabular-nums}.setting input[type=range]{width:100%;accent-color:#6bdcb6;margin:8px 0;cursor:pointer}.setting select{width:100%;padding:10px 12px;font:inherit;color:#e5eded;border:1px solid #3b4c53;border-radius:8px;background:#0c1316}.setting small{display:block;color:#8ea3ac;font-size:12px;line-height:1.65;margin-top:7px}.hours{display:flex;align-items:center;gap:10px}.hours select{min-width:0;flex:1}.wide{grid-column:1/-1}.settings-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px}.settings-actions button{margin:0}.settings-actions .primary{background:#6bdcb6;color:#10241d;font-weight:600;border-color:#6bdcb6}.settings-message{font-size:13px;margin-top:16px;min-height:22px}.settings-message.error{color:#f0b48f}:focus-visible{outline:2px solid #80dfb8;outline-offset:4px}.settings fieldset:disabled{opacity:.5}
+@media(max-width:620px){.connection-actions{margin-left:23px}.settings-grid{grid-template-columns:1fr}.settings-heading{align-items:flex-start;flex-wrap:wrap}.settings-heading button{margin-left:0}.network .value{font-size:clamp(20px,6vw,30px)}}
 </style>
 <main>
   <header><img src="/icon.png" alt="MiniDisplay"><div><h1>MiniDisplay Bridge</h1><p>电脑与桌面小屏的连接中心</p></div><small id="version">本机状态</small></header>
-  <section class="connection warn" id="connection" aria-live="polite"><span class="dot"></span><div><h2 id="connection-title">正在读取连接状态…</h2><p id="connection-detail">系统指标每秒更新，Codex 与网络位置按各自周期刷新。</p></div><button id="refresh" type="button">刷新状态</button></section>
+  <section class="connection warn" id="connection" aria-live="polite"><span class="dot"></span><div><h2 id="connection-title">正在读取连接状态…</h2><p id="connection-detail">系统指标每秒更新，Codex 与网络位置按各自周期刷新。</p></div><div class="connection-actions"><button id="refresh" type="button">刷新状态</button><a class="button-link" href="#settings">显示屏设置</a></div></section>
   <div class="grid">
     <section class="card"><div class="label">SYSTEM / 系统负载</div><div class="pair"><div><div class="value"><span id="cpu">--</span><span class="unit">%</span></div><div class="caption">CPU 使用率</div></div><div><div class="value"><span id="memory">--</span><span class="unit">%</span></div><div class="caption">内存使用率</div></div></div><div class="details"><span>CPU 温度 <b id="cpu-temp">--</b></span><span>GPU 温度 <b id="gpu-temp">--</b></span></div></section>
     <section class="card"><div class="label">CODEX / 本周余量 <span class="badge cached" id="usage-badge">等待数据</span></div><div class="value"><span id="usage">--</span><span class="unit">%</span></div><div class="bar" id="usage-bar"><span></span></div><div class="caption" id="usage-detail">读取当前登录账号的周限额</div></section>
@@ -22,7 +24,20 @@ header{display:flex;align-items:center;gap:18px;margin-bottom:30px}header img{wi
     <section class="card network"><div class="label">DISPLAY / 小屏状态</div><div class="value" id="location">--</div><div class="caption" id="location-detail">公网出口位置</div><div class="details"><span>亮度 <b id="brightness">--</b></span><span>模式 <b id="mode">--</b></span></div></section>
   </div>
   <aside class="help"><strong id="help-title">连接提示</strong><p id="help-text">连接一块 USB 状态屏后会自动识别。多个 USB 串口同时连接时，需要明确指定状态屏端口。</p></aside>
-  <footer><span id="updated">等待首次同步</span><span>本机只读面板 · <a href="/health">诊断信息</a></span></footer>
+  <section class="settings card" id="settings" aria-labelledby="settings-title">
+    <div class="settings-heading"><div><h2 id="settings-title">显示屏设置</h2><p>保存到这台电脑，下次启动自动恢复；无需重新刷固件。</p></div><button id="settings-reload" type="button" title="重新读取已保存设置，放弃尚未保存的修改">重新加载</button></div>
+    <form id="settings-form"><fieldset id="settings-fields" disabled>
+      <div class="settings-grid">
+        <div class="setting"><label for="day_brightness">日间亮度 <output id="day_brightness-value">50%</output></label><input id="day_brightness" type="range" min="0" max="100" step="1" value="50"><small>0% 为关闭背光，USB 数据仍会更新。</small></div>
+        <div class="setting"><label for="night_brightness">夜间亮度上限 <output id="night_brightness-value">10%</output></label><input id="night_brightness" type="range" min="0" max="100" step="1" value="10"><small>不会比日间更亮；以电脑本地时间判断夜间时段。</small></div>
+        <div class="setting"><label for="offline_brightness">断线亮度上限 <output id="offline_brightness-value">5%</output></label><input id="offline_brightness" type="range" min="0" max="100" step="1" value="5"><small>连续 4 秒无数据后生效，不会把已调暗的屏幕变亮。</small></div>
+        <div class="setting"><label id="night-hours-label">夜间时段</label><div class="hours"><select id="night_start_hour" aria-label="夜间开始时间"></select><span>至</span><select id="night_end_hour" aria-label="夜间结束时间"></select></div><small>支持跨午夜；开始与结束相同即关闭夜间调暗。</small></div>
+        <div class="setting wide"><label for="serial_port">USB 状态屏端口</label><select id="serial_port"><option value="">自动识别（仅连接一个 USB 串口时）</option></select><small>只选择系统状态屏，不要选择天气屏。更换端口后会自动重新连接；插入新设备后可点“重新加载”更新列表。</small></div>
+      </div>
+      <div class="settings-actions"><button class="primary" id="settings-save" type="submit">保存并应用</button><button id="reconnect" type="button">重新连接 USB</button></div>
+    </fieldset></form><p class="settings-message" id="settings-message" role="status">正在读取设置…</p>
+  </section>
+  <footer><span id="updated">等待首次同步</span><span>本机状态与设置 · <a href="/health">诊断信息</a></span></footer>
 </main>
 <script>
 'use strict';
@@ -65,5 +80,49 @@ async function refresh(){
  finally{clearTimeout(timeout);busy=false;$('refresh').disabled=false;}
 }
 $('refresh').addEventListener('click',refresh);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});setInterval(()=>{if(!document.hidden)refresh();},1000);refresh();
+
+const brightnessFields=['day_brightness','night_brightness','offline_brightness'];
+const hourFields=['night_start_hour','night_end_hour'];
+let settingsToken='',settingsRevision=0,settingsBusy=false;
+for(const id of hourFields){for(let hour=0;hour<24;hour++)$(id).add(new Option(String(hour).padStart(2,'0')+':00',String(hour)));}
+function settingsMessage(message,error=false){text('settings-message',message);$('settings-message').classList.toggle('error',error);}
+function settingsValues(){const values={};for(const id of [...brightnessFields,...hourFields])values[id]=Number($(id).value);values.serial_port=$('serial_port').value||null;return values;}
+function showSettings(data){
+ settingsToken=data.token;settingsRevision=data.revision;
+ for(const id of [...brightnessFields,...hourFields])$(id).value=data.settings[id];
+ for(const id of brightnessFields)text(id+'-value',$(id).value+'%');
+ $('serial_port').replaceChildren(new Option('自动识别（仅连接一个 USB 串口时）',''));
+ for(const port of data.ports)$('serial_port').add(new Option(port,port));
+ $('serial_port').value=data.settings.serial_port||'';
+}
+async function settingsRequest(path,body){
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),5000);
+ try{
+  const options={cache:'no-store',signal:controller.signal};
+  if(body!==undefined)Object.assign(options,{method:'POST',headers:{'Content-Type':'application/json','X-MiniDisplay-Token':settingsToken},body:JSON.stringify(body)});
+  const response=await fetch(path,options),data=await response.json();
+  if(!response.ok||!data.ok)throw Error(data.error||'无法读取设置');
+  return data;
+ }catch(error){if(error.name==='AbortError')throw Error('未收到确认，请重新加载设置核对。');throw error;}
+ finally{clearTimeout(timer);}
+}
+async function settingsAction(action){
+ if(settingsBusy)return;settingsBusy=true;$('settings-fields').disabled=true;$('settings-reload').disabled=true;
+ try{await action();}catch(error){settingsMessage(error.message||'操作失败，请重新加载后重试。',true);}
+ finally{settingsBusy=false;$('settings-fields').disabled=!settingsToken;$('settings-reload').disabled=false;}
+}
+async function loadSettings(){await settingsAction(async()=>{const data=await settingsRequest('/v1/settings');showSettings(data);settingsMessage(data.warning||'调整后点击“保存并应用”；自动刷新状态不会覆盖未保存的修改。',!!data.warning);});}
+for(const id of [...brightnessFields,...hourFields,'serial_port'])$(id).addEventListener('input',()=>{
+ if(brightnessFields.includes(id))text(id+'-value',$(id).value+'%');
+ settingsMessage('有未保存的修改。');
+});
+$('settings-form').addEventListener('submit',event=>{event.preventDefault();settingsAction(async()=>{
+ const data=await settingsRequest('/v1/settings',{revision:settingsRevision,settings:settingsValues()});showSettings(data);settingsMessage('已保存。设置会随下一组数据发送；断线时将在重连后应用。');refresh();
+});});
+$('settings-reload').addEventListener('click',loadSettings);
+$('reconnect').addEventListener('click',()=>settingsAction(async()=>{
+ await settingsRequest('/v1/reconnect',{});settingsMessage('已请求重新连接当前已保存的 USB 端口，通常需要两秒。');refresh();
+}));
+loadSettings();
 </script>
 </html>

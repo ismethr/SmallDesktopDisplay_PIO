@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import os
 import json
+import http.client
 import tempfile
 import threading
 import unittest
 import urllib.request
 import urllib.error
 from pathlib import Path
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest import mock
 
@@ -396,6 +398,174 @@ class DesktopDisplayBridgeTests(unittest.TestCase):
             self.assertFalse(second_acquired)
             self.assertTrue(second.closed)
             first.close()
+
+
+class DisplaySettingsTests(unittest.TestCase):
+    @contextmanager
+    def settings_server(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = bridge.SettingsState(Path(directory) / "settings.json")
+            handler = bridge.make_handler(bridge.codex.UsageState(), bridge.DesktopStatusState(), bridge.UsbState(), settings)
+            server = bridge.codex.BridgeHTTPServer(("127.0.0.1", 0), handler)
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                yield settings, server.server_port
+            finally:
+                server.shutdown()
+                server.server_close()
+                worker.join(timeout=2)
+
+    def request(self, port, method="GET", path="/v1/settings", body=None, headers=None):
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        request_headers = {"Content-Type": "application/json", **(headers or {})}
+        try:
+            connection.request(method, path, json.dumps(body) if body is not None else None, request_headers)
+            response = connection.getresponse()
+            return response.status, json.loads(response.read())
+        finally:
+            connection.close()
+
+    def test_settings_round_trip_and_cli_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            settings = bridge.SettingsState(path)
+            self.assertFalse(path.exists())
+            settings.update({"day_brightness": 35, "serial_port": "COM7"}, 0)
+            restored = bridge.SettingsState(path)
+            self.assertEqual(35, restored.get().day_brightness)
+            self.assertEqual("COM7", restored.get().serial_port)
+            self.assertEqual(70, bridge.SettingsState(path, overrides={"day_brightness": 70}).get().day_brightness)
+            self.assertEqual(35, bridge.SettingsState(path).get().day_brightness)
+            self.assertNotEqual(settings.token, restored.token)
+
+    def test_invalid_settings_do_not_partially_apply(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = bridge.SettingsState(Path(directory) / "settings.json")
+            for invalid in ({"day_brightness": 101}, {"night_brightness": True}, {"day_brightness": 3.2},
+                            {"night_start_hour": 24}, {"serial_port": "/etc/passwd"}, {"serial_port": "file.txt"},
+                            {"unknown": 1}, {"day_brightness": 15, "offline_brightness": -1}):
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    settings.update(invalid, 0)
+                self.assertEqual(bridge.DisplaySettings(), settings.get())
+                self.assertFalse(settings.path.exists())
+
+    def test_atomic_save_failure_preserves_memory_and_disk(self):
+        import bridge_settings
+        with tempfile.TemporaryDirectory() as directory:
+            settings = bridge.SettingsState(Path(directory) / "settings.json")
+            settings.update({"day_brightness": 42}, 0)
+            before = settings.path.read_bytes()
+            with mock.patch.object(bridge_settings.os, "replace", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    settings.update({"day_brightness": 12}, 1)
+            self.assertEqual(42, settings.get().day_brightness)
+            self.assertEqual(before, settings.path.read_bytes())
+            self.assertEqual([settings.path], list(settings.path.parent.iterdir()))
+
+    def test_corrupt_profile_is_preserved_and_defaults_used(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text('{"schema":1,"settings":{"day_brightness":999}}', encoding="utf-8")
+            before = path.read_bytes()
+            settings = bridge.SettingsState(path)
+            self.assertIsNotNone(settings.load_error)
+            self.assertEqual(50, settings.get().day_brightness)
+            self.assertEqual(before, path.read_bytes())
+
+    def test_brightness_caps_and_midnight_boundaries(self):
+        settings = bridge.DisplaySettings(day_brightness=8, night_brightness=10, offline_brightness=20,
+                                          night_start_hour=22, night_end_hour=7)
+        for hour in (0, 6, 22, 23):
+            self.assertEqual((8, 8, True), settings.brightness(hour))
+        for hour in (7, 12, 21):
+            self.assertEqual((8, 8, False), settings.brightness(hour))
+        self.assertEqual((0, 0, True), bridge.DisplaySettings(day_brightness=0).brightness(1))
+        self.assertEqual((50, 5, False), bridge.DisplaySettings(night_start_hour=7, night_end_hour=7).brightness(7))
+
+    def test_http_rejects_missing_token_foreign_origin_and_rebinding(self):
+        with self.settings_server() as (settings, port):
+            body = {"revision": 0, "settings": {"day_brightness": 33}}
+            for headers in ({}, {"X-MiniDisplay-Token": "é"},
+                            {"X-MiniDisplay-Token": settings.token, "Origin": "https://example.com"},
+                            {"X-MiniDisplay-Token": settings.token, "Origin": "null"},
+                            {"X-MiniDisplay-Token": settings.token, "Host": f"example.com:{port}"}):
+                self.assertEqual(403, self.request(port, "POST", body=body, headers=headers)[0])
+            self.assertEqual(403, self.request(port, headers={"Host": f"example.com:{port}"})[0])
+            self.assertFalse(settings.path.exists())
+
+    def test_http_save_revision_conflict_and_reconnect(self):
+        with self.settings_server() as (settings, port):
+            code, payload = self.request(port)
+            self.assertEqual(200, code)
+            headers = {"X-MiniDisplay-Token": payload["token"], "Origin": f"http://127.0.0.1:{port}"}
+            body = {"revision": payload["revision"], "settings": {"day_brightness": 27}}
+            self.assertEqual(200, self.request(port, "POST", body=body, headers=headers)[0])
+            self.assertEqual(27, bridge.SettingsState(settings.path).get().day_brightness)
+            self.assertEqual(409, self.request(port, "POST", body=body, headers=headers)[0])
+            generation = settings.connection()[1]
+            self.assertEqual(200, self.request(port, "POST", "/v1/reconnect", {}, headers)[0])
+            self.assertEqual(generation + 1, settings.connection()[1])
+            self.assertEqual(1, settings.public()["revision"])
+
+    def test_http_rejects_unknown_ports_and_invalid_bodies(self):
+        with self.settings_server() as (settings, port):
+            headers = {"X-MiniDisplay-Token": settings.token}
+            with mock.patch.object(bridge, "_enumerated_serial_ports", return_value=[("COM7", True)]), mock.patch.object(
+                bridge, "discover_serial_port", return_value=("COM7", None)
+            ):
+                self.assertEqual(["COM7"], self.request(port)[1]["ports"])
+                for body in ([1], {"revision": 0, "settings": {"serial_port": "COM8"}},
+                             {"revision": 0, "settings": {"serial_port": "/etc/passwd"}}, {"settings": {}}):
+                    self.assertEqual(400, self.request(port, "POST", body=body, headers=headers)[0])
+                self.assertEqual(400, self.request(port, "POST", body={}, headers={**headers, "Content-Type": "text/plain"})[0])
+                self.assertEqual(400, self.request(port, "POST", body={}, headers={**headers, "Content-Length": "9000"})[0])
+            self.assertFalse(settings.path.exists())
+
+    def test_serial_live_port_change_and_manual_reconnect(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = bridge.SettingsState(Path(directory) / "settings.json", bridge.DisplaySettings(serial_port="COM7"))
+            stop = SimulatedStop(12)
+            port = mock.Mock()
+            writes = []
+            def write(frame):
+                writes.append(port.port)
+                if len(writes) == 1:
+                    settings.update({"serial_port": "COM8"}, 0)
+                elif len(writes) == 2:
+                    settings.reconnect()
+                return len(frame)
+            port.write.side_effect = write
+            backend = SimpleNamespace(Serial=mock.Mock(return_value=port), SerialException=OSError)
+            with mock.patch.object(bridge.time, "monotonic", side_effect=lambda: stop.now), mock.patch.object(
+                bridge, "serial", backend
+            ), mock.patch.object(bridge, "discover_serial_port", side_effect=lambda chosen: (chosen, None)):
+                state = bridge.DesktopStatusState()
+                state.set(bridge.DesktopStatusSnapshot(valid=True))
+                bridge.serial_writer_loop(state, bridge.UsbState(), stop, None, 115200, runtime_settings=settings)
+            self.assertEqual("COM7", writes[0])
+            self.assertTrue(all(value == "COM8" for value in writes[1:]))
+            self.assertEqual(3, port.open.call_count)
+            self.assertEqual(3, port.close.call_count)
+
+    def test_sampler_applies_new_brightness_without_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = bridge.SettingsState(Path(directory) / "settings.json")
+            stop = SimulatedStop(3)
+            snapshots = []
+            def capture(snapshot):
+                snapshots.append(snapshot)
+                if len(snapshots) == 1:
+                    settings.update({"day_brightness": 6, "night_brightness": 20}, 0)
+            state = bridge.DesktopStatusState()
+            backend = SimpleNamespace(cpu_percent=lambda **kw: 21, net_io_counters=lambda **kw: {},
+                                      virtual_memory=lambda: SimpleNamespace(percent=42))
+            with mock.patch.object(bridge, "psutil", backend), mock.patch.object(state, "set", side_effect=capture), mock.patch.object(
+                bridge.time, "localtime", return_value=SimpleNamespace(tm_hour=1)
+            ), mock.patch.object(bridge, "choose_network_interface", return_value=None):
+                bridge._sample_desktop_status_loop(state, bridge.codex.UsageState(), bridge.TemperatureState(),
+                    bridge.NetworkLocationState(), stop, 1, None, 0, 7, 50, 10, 5, settings)
+            self.assertEqual([10, 6], [s.display_brightness_percent for s in snapshots])
 
 
 if __name__ == "__main__":

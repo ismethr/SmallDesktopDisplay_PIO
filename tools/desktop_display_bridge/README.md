@@ -20,7 +20,13 @@ CPU、内存和网卡计数统一由 [psutil](https://github.com/giampaolo/psuti
 
 ### 可双击的后台 App（推荐）
 
-macOS App 的正式名称是 **MiniDisplay Bridge（迷你屏桥接）**。GitHub Release 提供两种不依赖系统 Python 的原生 App：x86 平台使用 `SmallDesktopDisplayBridge-macos-x86_64.zip`，ARM 平台使用 `SmallDesktopDisplayBridge-macos-arm64.zip`。解压后将 `MiniDisplay Bridge.app` 拖入“应用程序”，双击即可无窗口、无 Dock 图标地在后台运行；重复启动不会产生第二个实例。它会自动识别唯一的 CH340/USB 串口，包括本项目常见的 `/dev/cu.usbserial-*`。
+macOS App 的正式名称是 **MiniDisplay Bridge（迷你屏桥接）**。发布包按架构区分：x86 平台使用 `SmallDesktopDisplayBridge-macos-x86_64.zip`，ARM 平台使用 `SmallDesktopDisplayBridge-macos-arm64.zip`。解压后将 `MiniDisplay Bridge.app` 拖入“应用程序”，双击后常驻菜单栏，不占用 Dock；重复启动不会产生第二组实例。它会自动识别唯一的 CH340/USB 串口，包括本项目常见的 `/dev/cu.usbserial-*`。
+
+- 左键点击菜单栏的小屏图标：打开 App 内的状态与设置面板。
+- 右键点击：选择“打开状态面板”“显示屏设置…”或“退出 MiniDisplay Bridge”。
+- 关闭面板只隐藏窗口，USB 更新继续运行；退出 App 会一并停止后台采集并释放串口。
+
+菜单栏由系统 AppKit 实现，图标随浅色/深色菜单栏自动适配；内置 WebKit 仅加载本机状态页面，不打开远程网页。菜单栏功能需 1.11.0 或更新版本，旧发布包仍是纯后台模式。
 
 运行日志位于：
 
@@ -30,7 +36,7 @@ macOS App 的正式名称是 **MiniDisplay Bridge（迷你屏桥接）**。GitHu
 
 可在浏览器打开 [本机状态页面](http://127.0.0.1:8766/)，查看 USB 连接、CPU/内存、温度、网速、出口位置以及 Codex 余量和更新时间。页面每秒自动刷新，宽窗口并排显示，窄窗口自动单列排列；“刷新状态”只重新读取本机数据，不会额外请求 Codex 或位置服务。原有 `/health` 诊断接口继续保留。
 
-要开机自动运行，可在“系统设置 → 通用 → 登录项”中添加 `MiniDisplay Bridge.app`；要停止可在“活动监视器”结束 `MiniDisplay Bridge` 进程。
+要开机自动运行，可在“系统设置 → 通用 → 登录项”中添加 `MiniDisplay Bridge.app`；要停止可右键菜单栏图标并选择“退出 MiniDisplay Bridge”。
 
 社区构建使用临时签名而非 Apple Developer ID。首次运行下载的发布包时，请在 Finder 中右键 App 并选择“打开”；不要运行来源不明的同名程序。
 
@@ -113,6 +119,26 @@ USB 状态屏不需要入站网络访问，建议使用 `--listen-host 127.0.0.1
 
 ## 配置
 
+### 页面设置
+
+点击面板上的“显示屏设置”，调整后选择“保存并应用”：
+
+| 设置 | 默认值 | 行为 |
+| --- | --- | --- |
+| 日间亮度 | 50% | 0% 关闭背光，数据继续更新 |
+| 夜间亮度上限 | 10% | 不会高于日间亮度 |
+| 断线亮度上限 | 5% | 无有效帧 4 秒后生效，不会高于断线前亮度 |
+| 夜间时段 | 00:00–07:00 | 使用电脑本地时间；起止相同即关闭，支持跨午夜 |
+| USB 端口 | 自动识别 | 多个 USB 串口同时连接时应明确选择状态屏端口，不要选择天气屏 |
+
+亮度和时段随下一组系统数据发送。切换端口会释放原串口并重新连接；“重新连接 USB”使用当前已保存的端口，不会保存尚未提交的表单。自动刷新状态不会覆盖正在编辑的设置。
+
+设置文件位于 macOS 的 `~/Library/Application Support/SmallDesktopDisplay/settings.json`、Windows 的 `%LOCALAPPDATA%\SmallDesktopDisplay\settings.json`；只包含上述显示参数，不包含账号或令牌。保存采用完整校验和原子替换，失败时保留原设置；多个窗口同时编辑时会提示重新加载，避免覆盖更新。
+
+优先级为：显式命令行参数 → 已保存设置 → 环境变量 → 默认值。可用 `--settings-file <路径>` 指定独立配置。源码构建 macOS App 还需要 Xcode Command Line Tools（包含 Swift 编译器），无需额外 GUI Python 依赖。
+
+### 环境变量
+
 可用环境变量：
 
 - `CODEX_BRIDGE_HOST`、`CODEX_BRIDGE_PORT`、`CODEX_BRIDGE_REFRESH_SECONDS`：与原 Codex 桥接相同。
@@ -136,18 +162,20 @@ USB 状态屏不需要入站网络访问，建议使用 `--listen-host 127.0.0.1
 - USB 成功写出完整数据帧后才标记为已连接；写入超时、短写或初始化失败时会释放串口并重试。此状态表示电脑端发送成功，不代表设备返回了确认帧。
 - 系统采集出现异常时自动重试，并重新建立网速计数基线；超过 15 秒未更新的系统快照不再发送，小屏随后进入断线状态，避免把旧值当成实时数据。
 - 新采样间隔较长时，每秒重复发送仍有效的快照，避免正常采样间隔触发小屏断线；Codex 和位置数据继续保留各自的陈旧标志。
-- 本机状态页面只读，不加载远程字体或脚本；正常的自动刷新不会持续增加访问日志。
+- 状态页面不加载远程字体或脚本；正常的自动刷新不会持续增加访问日志。显示设置仅允许来自本机且来源匹配的请求，保存和重连还需要本次启动的随机会话校验值。
 
 页面与诊断接口：
 
 - `/`：MiniDisplay Bridge 本机状态页面。
 - `/v1/overview`：页面使用的系统、USB 与 Codex 汇总数据，不包含凭据。
+- `/v1/settings`：本机读取/保存显示设置；写入需 JSON、会话校验与当前修订号。
+- `/v1/reconnect`：本机请求释放并重新连接当前 USB 端口；需要会话校验。
 - `/health`：Codex、桌面状态和 USB 连接是否就绪。
 - `/v1/desktop-status`：浏览器可读的最新桌面状态，用于排错。
 - `/v1/mac-status`：保留的旧版兼容路径，内容与 `/v1/desktop-status` 相同。
 - `/v1/codex-usage`：本机 Codex 用量诊断接口。
 
-这些 HTTP 接口没有账号认证，只适合可信家庭局域网。默认情况下桥接通过 Codex 官方 App Server 获取限额，不读取 OAuth 令牌；兼容旧版客户端的 `legacy` 回退也只会把令牌发送至经过 TLS 验证的 `chatgpt.com`。凭据不会进入 USB 数据帧、App 包或日志。
+状态诊断接口没有账号认证，不应暴露到不可信网络；设置接口另外限制为本机访问。macOS 菜单栏 App 固定绑定 `127.0.0.1`，WebKit 的 HTTP 例外也仅针对该回环地址，不关闭全局网络安全检查。默认情况下桥接通过 Codex 官方 App Server 获取限额，不读取 OAuth 令牌；兼容旧版客户端的 `legacy` 回退也只会把令牌发送至经过 TLS 验证的 `chatgpt.com`。凭据不会进入 USB 数据帧、App 包或日志。
 
 ## USB 协议
 

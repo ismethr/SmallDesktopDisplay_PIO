@@ -10,7 +10,9 @@ import math
 import os
 import platform
 import re
+import secrets
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -45,6 +47,7 @@ if str(CODEX_BRIDGE_DIR) not in sys.path:
     sys.path.insert(0, str(CODEX_BRIDGE_DIR))
 
 import codex_usage_bridge as codex  # noqa: E402
+from bridge_settings import DisplaySettings, RevisionConflict, SettingsState, default_settings_path
 
 
 DEFAULT_SERIAL_BAUD = 115200
@@ -600,6 +603,7 @@ def _sample_desktop_status_loop(
     day_brightness: int,
     night_brightness: int,
     offline_brightness: int,
+    runtime_settings: SettingsState | None = None,
 ) -> None:
     assert psutil is not None
     psutil.cpu_percent(interval=None)
@@ -629,11 +633,10 @@ def _sample_desktop_status_loop(
         previous = current
         previous_at = now_mono
 
-        night_mode = is_night_hour(
-            time.localtime().tm_hour,
-            night_start_hour,
-            night_end_hour,
+        settings = runtime_settings.get() if runtime_settings else DisplaySettings(
+            day_brightness, night_brightness, offline_brightness, night_start_hour, night_end_hour,
         )
+        brightness, dimmed_brightness, night_mode = settings.brightness(time.localtime().tm_hour)
         usage = usage_state.get()
         temperatures = temperature_state.get()
         network_location = network_location_state.get()
@@ -654,8 +657,8 @@ def _sample_desktop_status_loop(
             codex_usage_stale=usage.stale,
             download_bps=download_bps,
             upload_bps=upload_bps,
-            display_brightness_percent=night_brightness if night_mode else day_brightness,
-            offline_brightness_percent=offline_brightness,
+            display_brightness_percent=brightness,
+            offline_brightness_percent=dimmed_brightness,
             night_mode=night_mode,
             interface=interface,
             sampled_at=int(time.time()),
@@ -766,12 +769,14 @@ def serial_writer_loop(
     explicit_port: str | None,
     baud: int,
     reconnect_seconds: float = DEFAULT_RECONNECT_SECONDS,
+    runtime_settings: SettingsState | None = None,
 ) -> None:
     assert serial is not None
     active = None
     last_sequence: int | None = None
     last_error: str | None = None
     last_write_at = 0.0
+    generation = -1
 
     def close_active() -> None:
         nonlocal active
@@ -783,6 +788,14 @@ def serial_writer_loop(
             active = None
 
     while not stop_event.is_set():
+        if runtime_settings is not None:
+            explicit_port, requested_generation = runtime_settings.connection()
+            if generation != requested_generation:
+                close_active()
+                generation = requested_generation
+                last_sequence = None
+                last_error = None
+                usb_state.set(UsbSnapshot(phase="connecting", error=None))
         if active is None:
             port, error = discover_serial_port(explicit_port)
             if port is None:
@@ -857,13 +870,21 @@ def make_handler(
     usage_state: codex.UsageState,
     status_state: DesktopStatusState,
     usb_state: UsbState,
+    settings_state: SettingsState | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         server_version = "DesktopDisplayBridge/1.0"
 
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             path = self.path.split("?", 1)[0]
-            if path in {"/", "/icon.png"}:
+            if path == "/v1/settings":
+                if settings_state is None:
+                    self._send_json({"ok": False, "error": "settings unavailable"}, HTTPStatus.NOT_FOUND)
+                elif not self._local_request():
+                    self._send_json({"ok": False, "error": "设置仅允许在本机访问"}, HTTPStatus.FORBIDDEN)
+                else:
+                    self._send_json(self._settings_payload(), HTTPStatus.OK)
+            elif path in {"/", "/icon.png"}:
                 filename = "dashboard.html" if path == "/" else "MiniDisplayBridgeIcon.png"
                 content_type = "text/html; charset=utf-8" if path == "/" else "image/png"
                 try:
@@ -875,7 +896,7 @@ def make_handler(
             elif path == "/v1/overview":
                 status = status_state.get()
                 self._send_json({
-                    "app": "MiniDisplay Bridge", "version": "1.10.0",
+                    "app": "MiniDisplay Bridge", "version": "1.11.0",
                     "desktop": status.as_public_dict(),
                     "usb": usb_state.get().as_public_dict(),
                     "usage": usage_state.get().as_public_dict(),
@@ -911,6 +932,69 @@ def make_handler(
                 )
             else:
                 self._send_json({"ok": False, "error": "not found"}, HTTPStatus.NOT_FOUND)
+
+        def _local_request(self) -> bool:
+            port = self.server.server_port
+            hosts = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+            host = self.headers.get("Host", "").lower()
+            origin = self.headers.get("Origin")
+            return (self.client_address[0] in {"127.0.0.1", "::1"} and host in hosts
+                    and (origin is None or origin == "http://" + host))
+
+        def _settings_payload(self) -> dict[str, Any]:
+            assert settings_state is not None
+            payload = settings_state.public()
+            ports = {port for port, usb in _enumerated_serial_ports() if usb}
+            automatic, _ = discover_serial_port(None)
+            if automatic:
+                ports.add(automatic)
+            current = payload["settings"]["serial_port"]
+            if current:
+                ports.add(current)
+            payload["ports"] = sorted(ports)
+            return payload
+
+        def do_POST(self) -> None:  # noqa: N802
+            self.close_connection = True
+            path = self.path.split("?", 1)[0]
+            if settings_state is None or path not in {"/v1/settings", "/v1/reconnect"}:
+                self._send_json({"ok": False, "error": "not found"}, HTTPStatus.NOT_FOUND)
+                return
+            if not self._local_request() or not secrets.compare_digest(
+                self.headers.get("X-MiniDisplay-Token", "").encode("utf-8"), settings_state.token.encode("ascii")
+            ):
+                self._send_json({"ok": False, "error": "会话已失效或来源不符，请重新加载设置。"}, HTTPStatus.FORBIDDEN)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if (not 0 < length <= 8192 or self.headers.get("Transfer-Encoding")
+                        or self.headers.get_content_type() != "application/json"):
+                    raise ValueError("请求格式无效")
+                self.connection.settimeout(3.0)
+                raw = self.rfile.read(length)
+                if len(raw) != length:
+                    raise ValueError("请求不完整")
+                body = json.loads(raw)
+                if not isinstance(body, dict):
+                    raise ValueError("请求格式无效")
+                if path == "/v1/reconnect":
+                    if body:
+                        raise ValueError("重连请求不能包含额外参数")
+                    settings_state.reconnect()
+                else:
+                    if set(body) != {"revision", "settings"} or not isinstance(body["settings"], dict):
+                        raise ValueError("设置请求格式无效")
+                    chosen = body["settings"].get("serial_port")
+                    if chosen is not None and chosen not in self._settings_payload()["ports"]:
+                        raise ValueError("请选择当前列表中的 USB 端口，或使用自动识别。")
+                    settings_state.update(body["settings"], body["revision"])
+                self._send_json(self._settings_payload(), HTTPStatus.OK)
+            except RevisionConflict as exc:
+                self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.CONFLICT)
+            except (ValueError, TypeError, UnicodeError) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            except OSError:
+                self._send_json({"ok": False, "error": "未能保存设置；原设置保持不变，请检查本机文件权限。"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
         def _send_json(self, payload: Mapping[str, Any], status: HTTPStatus) -> None:
             body = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
@@ -1033,6 +1117,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=int(os.getenv("DESKTOP_BRIDGE_OFFLINE_BRIGHTNESS", str(DEFAULT_OFFLINE_BRIGHTNESS))),
     )
     parser.add_argument("--no-usb", action="store_true", help="collect metrics without opening a serial port")
+    parser.add_argument("--settings-file", type=Path, default=default_settings_path())
     return parser
 
 
@@ -1061,7 +1146,8 @@ def _validate_args(args: argparse.Namespace) -> str | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    command_arguments = sys.argv[1:] if argv is None else argv
+    args = build_parser().parse_args(command_arguments)
     args.auth_file = args.auth_file.expanduser()
     validation_error = _validate_args(args)
     if validation_error:
@@ -1079,12 +1165,20 @@ def main(argv: list[str] | None = None) -> int:
     temperature_state = TemperatureState()
     network_location_state = NetworkLocationState()
     usb_state = UsbState()
+    overrides = {name: getattr(args, name) for name in (
+        "day_brightness", "night_brightness", "offline_brightness", "night_start_hour", "night_end_hour", "serial_port",
+    ) if any(item == "--" + name.replace("_", "-") or item.startswith("--" + name.replace("_", "-") + "=")
+             for item in command_arguments)}
+    settings_state = SettingsState(args.settings_file.expanduser(), DisplaySettings(
+        args.day_brightness, args.night_brightness, args.offline_brightness,
+        args.night_start_hour, args.night_end_hour, args.serial_port,
+    ), overrides)
     if args.no_usb:
         usb_state.set(UsbSnapshot(phase="disabled", error="USB output disabled"))
     stop_event = threading.Event()
     server = codex.BridgeHTTPServer(
         (args.listen_host, args.listen_port),
-        make_handler(usage_state, status_state, usb_state),
+        make_handler(usage_state, status_state, usb_state, settings_state),
     )
 
     threads = [
@@ -1129,6 +1223,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.day_brightness,
                 args.night_brightness,
                 args.offline_brightness,
+                settings_state,
             ),
             name="desktop-status-sampler",
             daemon=True,
@@ -1152,7 +1247,8 @@ def main(argv: list[str] | None = None) -> int:
         threads.append(
             threading.Thread(
                 target=serial_writer_loop,
-                args=(status_state, usb_state, stop_event, args.serial_port, args.serial_baud),
+                args=(status_state, usb_state, stop_event, args.serial_port, args.serial_baud,
+                      DEFAULT_RECONNECT_SECONDS, settings_state),
                 name="usb-display-writer",
                 daemon=True,
             )
@@ -1165,6 +1261,12 @@ def main(argv: list[str] | None = None) -> int:
         file=sys.stderr,
         flush=True,
     )
+    def terminate_bridge(_signum: int, _frame: Any) -> None:
+        raise KeyboardInterrupt
+
+    previous_sigterm = None
+    if threading.current_thread() is threading.main_thread():
+        previous_sigterm = signal.signal(signal.SIGTERM, terminate_bridge)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
@@ -1175,6 +1277,8 @@ def main(argv: list[str] | None = None) -> int:
         server.server_close()
         for thread in threads:
             thread.join(timeout=2)
+        if previous_sigterm is not None:
+            signal.signal(signal.SIGTERM, previous_sigterm)
     return 0
 
 

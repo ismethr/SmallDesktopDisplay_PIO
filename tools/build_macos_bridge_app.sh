@@ -6,6 +6,7 @@ repository_root="${script_dir:h}"
 bridge_directory="${repository_root}/tools/desktop_display_bridge"
 launcher="${bridge_directory}/macos_bridge_launcher.py"
 smc_source="${bridge_directory}/macos_smc_temperature.c"
+menu_source="${bridge_directory}/macos_menu_bar.swift"
 icon_path="${bridge_directory}/assets/MiniDisplayBridgeIcon.icns"
 build_root="${repository_root}/build/macos_bridge_app"
 helper_directory="${build_root}/helpers"
@@ -16,7 +17,7 @@ spec_directory="${build_root}/spec"
 pyinstaller_config_directory="${build_root}/pyinstaller-config"
 python_command="${PYTHON:-${repository_root}/.venv/bin/python}"
 target_arch="${MACOS_BRIDGE_ARCH:-$(uname -m)}"
-release_version="${BRIDGE_VERSION:-1.10.0}"
+release_version="${BRIDGE_VERSION:-1.11.0}"
 product_name="MiniDisplay Bridge"
 
 if [[ ! -x "${python_command}" ]]; then
@@ -75,6 +76,19 @@ compile_smc_helper() {
     -o "${output}"
 }
 
+compile_menu_helper() {
+  local architecture="$1"
+  local output="$2"
+  local deployment_target="10.15"
+  if [[ "${architecture}" == "arm64" ]]; then
+    deployment_target="11.0"
+  fi
+  xcrun --sdk macosx swiftc -O -swift-version 5 \
+    -target "${architecture}-apple-macosx${deployment_target}" \
+    -module-cache-path "${build_root}/swift-module-cache" \
+    "${menu_source}" -framework AppKit -framework WebKit -o "${output}"
+}
+
 if ! command -v xcrun >/dev/null 2>&1; then
   print -u2 "xcrun was not found; Xcode Command Line Tools are required"
   exit 2
@@ -116,7 +130,25 @@ if [[ ! -d "${app_path}" ]]; then
   exit 1
 fi
 
+# Keep PyInstaller's worker inside the original bundle so its framework/resource
+# discovery is unchanged. A native executable owns AppKit's main run loop.
+mv "${app_path}/Contents/MacOS/${product_name}" "${app_path}/Contents/MacOS/${product_name} Worker"
+if [[ "${target_arch}" == "universal2" ]]; then
+  compile_menu_helper x86_64 "${helper_directory}/MiniDisplayMenu-x86_64"
+  compile_menu_helper arm64 "${helper_directory}/MiniDisplayMenu-arm64"
+  xcrun lipo -create "${helper_directory}/MiniDisplayMenu-x86_64" \
+    "${helper_directory}/MiniDisplayMenu-arm64" -output "${app_path}/Contents/MacOS/${product_name}"
+else
+  compile_menu_helper "${target_arch}" "${app_path}/Contents/MacOS/${product_name}"
+fi
+
 info_plist="${app_path}/Contents/Info.plist"
+# WebKit loads only the bundled worker's loopback HTTP page. Do not disable ATS
+# globally or allow arbitrary web content/network destinations.
+/usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "${info_plist}"
+/usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSExceptionDomains dict" "${info_plist}"
+/usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSExceptionDomains:127.0.0.1 dict" "${info_plist}"
+/usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSExceptionDomains:127.0.0.1:NSExceptionAllowsInsecureHTTPLoads bool true" "${info_plist}"
 if ! /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${release_version}" "${info_plist}" 2>/dev/null; then
   /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string ${release_version}" "${info_plist}"
 fi
