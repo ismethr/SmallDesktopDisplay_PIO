@@ -98,7 +98,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.worker = nil
-                if self.quitting { NSApp.reply(toApplicationShouldTerminate: true); return }
+                if self.quitting { return }
                 self.workerFailures += 1
                 if ended.terminationStatus != 0 && self.workerFailures <= 3 {
                     DispatchQueue.main.asyncAfter(deadline: .now() + Double(self.workerFailures * 2)) { self.startWorker() }
@@ -179,10 +179,16 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         quitting = true
         guard let process = worker, process.isRunning else { return .terminateNow }
         process.terminate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+        // AppKit can stop servicing the main dispatch queue after terminateLater.
+        // Reap this owned child before returning, with a background deadline so
+        // shutdown never depends on a completion queued on that same main loop.
+        let deadline = DispatchWorkItem {
             if process.isRunning { kill(process.processIdentifier, SIGKILL) }
         }
-        return .terminateLater
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 8, execute: deadline)
+        process.waitUntilExit()
+        deadline.cancel()
+        return .terminateNow
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
