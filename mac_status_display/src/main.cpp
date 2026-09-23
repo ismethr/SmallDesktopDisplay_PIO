@@ -2,7 +2,12 @@
 #include <TFT_eSPI.h>
 
 #include "status_protocol.h"
+#include "offline_clock.h"
 #include "../../src/img/chatgpt_24.h"
+#include "../../src/core/ClockFontRenderer.h"
+#ifdef ARDUINO
+#include "offline_weather.h"
+#endif
 
 namespace {
 
@@ -34,7 +39,11 @@ constexpr uint16_t kFlagOrange = flagPanelColor(0xFD20);
 constexpr uint16_t kFlagDarkBlue = flagPanelColor(0x0011);
 
 TFT_eSPI display;
-char serialBuffer[macstatus::kMaximumFrameLength + 1] = {};
+constexpr size_t kSerialBufferLength = 1024;
+char serialBuffer[kSerialBufferLength + 1] = {};
+#ifdef ARDUINO
+OfflineWeatherPage offlineWeather(display);
+#endif
 size_t serialLength = 0;
 bool serialOverflow = false;
 bool offlineDrawn = false;
@@ -43,6 +52,9 @@ uint8_t currentBrightness = 255;
 uint8_t offlineBrightness = kDefaultOfflineBrightness;
 bool hasFrame = false;
 macstatus::StatusFrame previousFrame;
+macstatus::OfflineClock offlineClock;
+uint32_t drawnClockSecond = UINT32_MAX;
+bool drawnClockValid = false;
 
 void drawCodexUsage(int16_t remainingTenths, bool stale);
 void drawLoad(int16_t x, const char *label, int16_t tenths);
@@ -491,6 +503,7 @@ void drawFrame(const macstatus::StatusFrame &frame) {
   offlineBrightness = frame.offlineBrightnessPercent;
   applyBrightness(frame.brightnessPercent);
   const bool refresh = !hasFrame || offlineDrawn;
+  if (offlineDrawn) drawStaticInterface();
   if (refresh || frame.cpuTenths != previousFrame.cpuTenths)
     drawLoad(16, "CPU", frame.cpuTenths);
   if (refresh || frame.memoryTenths != previousFrame.memoryTenths)
@@ -514,9 +527,87 @@ void drawFrame(const macstatus::StatusFrame &frame) {
   offlineDrawn = false;
 }
 
+void drawOfflineClock() {
+  if (!offlineDrawn || drawnClockValid != offlineClock.valid()) {
+    display.fillScreen(kBackground);
+#ifndef ARDUINO
+    display.setTextDatum(MC_DATUM);
+    display.setTextSize(1);
+    display.setTextFont(2);
+    display.setTextColor(kMuted, kBackground);
+    display.drawString("LOCAL CLOCK", 120, 35);
+    display.setTextFont(1);
+    display.drawString("USB OFFLINE", 120, 201);
+    display.drawString(offlineClock.valid() ? "Reconnect to sync" : "Connect USB to set time", 120, 218);
+#endif
+    drawnClockSecond = UINT32_MAX;
+  }
+  const uint32_t seconds = offlineClock.seconds();
+#ifdef ARDUINO
+  const bool pageRefresh = !offlineDrawn || drawnClockValid != offlineClock.valid() ||
+      seconds / 60 != drawnClockSecond / 60;
+#endif
+  if (offlineDrawn && drawnClockSecond == seconds) {
+#ifdef ARDUINO
+    offlineWeather.draw(offlineClock, pageRefresh);
+#endif
+    return;
+  }
+  if (offlineClock.valid()) {
+    const bool refresh = drawnClockSecond == UINT32_MAX;
+    if (refresh || seconds / 3600 != drawnClockSecond / 3600) {
+      sdd::drawClockDigit(display, 20, 82, seconds / 3600 / 10, 3, SD_FONT_WHITE);
+      sdd::drawClockDigit(display, 60, 82, seconds / 3600 % 10, 3, SD_FONT_WHITE);
+    }
+    if (refresh || seconds / 60 != drawnClockSecond / 60) {
+      sdd::drawClockDigit(display, 101, 82, seconds / 60 % 60 / 10, 3, SD_FONT_YELLOW);
+      sdd::drawClockDigit(display, 141, 82, seconds / 60 % 10, 3, SD_FONT_YELLOW);
+    }
+    sdd::drawClockDigit(display, 182, 112, seconds % 60 / 10, 2, SD_FONT_WHITE);
+    sdd::drawClockDigit(display, 202, 112, seconds % 10, 2, SD_FONT_WHITE);
+  } else {
+    display.fillRect(0, 76, 240, 72, kBackground);
+    display.setTextDatum(MC_DATUM);
+    display.setTextFont(2);
+    display.setTextSize(3);
+    display.setTextColor(TFT_WHITE, kBackground);
+    display.drawString("--:--", 120, 110);
+  }
+  display.setTextSize(1);
+#ifdef ARDUINO
+  // Original 90px digit clears overlap the calendar band: paint it afterwards.
+  offlineWeather.draw(offlineClock, pageRefresh);
+#endif
+  drawnClockSecond = seconds;
+  drawnClockValid = offlineClock.valid();
+}
+
 void processLine() {
   if (serialOverflow || serialLength == 0) return;
   serialBuffer[serialLength] = '\0';
+#ifdef ARDUINO
+  if (macstatus::validAuxFrame(serialBuffer, "$MSQ1*")) {
+    Serial.printf("MSQ1 offline=%u clock=%u date=%u weather=%u epoch=%u heap=%u\n",
+                  offlineDrawn, offlineClock.valid(), offlineClock.dateValid(),
+                  offlineWeather.hasWeather(), offlineClock.epoch(), ESP.getFreeHeap());
+    return;
+  }
+#endif
+  uint32_t clockSeconds = 0;
+  if (macstatus::parseCalendarFrame(serialBuffer, clockSeconds)) {
+    offlineClock.syncEpoch(clockSeconds, millis());
+    return;
+  }
+#ifdef ARDUINO
+  if (offlineWeather.accept(serialBuffer)) {
+    Serial.println("MSW1 OK");
+    return;
+  }
+#endif
+  if (macstatus::parseClockFrame(serialBuffer, clockSeconds)) {
+    offlineClock.sync(clockSeconds, millis());
+    return;  // Clock traffic alone must not keep a stale status page alive.
+  }
   macstatus::StatusFrame frame;
   memset(&frame, 0, sizeof(frame));
   frame.cpuTemperatureTenths = macstatus::kMissingTemperature;
@@ -538,7 +629,7 @@ void readSerialFrames() {
       serialLength = 0;
       serialOverflow = false;
     } else if (next != '\r') {
-      if (serialLength < macstatus::kMaximumFrameLength) {
+      if (serialLength < kSerialBufferLength) {
         serialBuffer[serialLength++] = next;
       } else {
         serialOverflow = true;
@@ -550,6 +641,9 @@ void readSerialFrames() {
 }  // namespace
 
 void setup() {
+#ifdef ARDUINO
+  Serial.setRxBufferSize(2048);
+#endif
   Serial.begin(kSerialBaud);
   pinMode(TFT_BL, OUTPUT);
   analogWriteRange(1023);
@@ -558,6 +652,15 @@ void setup() {
   display.begin();
   display.invertDisplay(1);
   display.setRotation(0);
+#ifdef ARDUINO
+  TJpgDec.setJpgScale(1);
+  TJpgDec.setSwapBytes(true);
+  TJpgDec.setCallback([](int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *pixels) {
+    if (x < 0 || y < 0 || x + w > 240 || y + h > 240) return false;
+    display.pushImage(x, y, w, h, pixels);
+    return true;
+  });
+#endif
   drawStaticInterface();
   lastValidFrameAt = millis();
   Serial.println("MSD4 READY");
@@ -565,9 +668,15 @@ void setup() {
 
 void loop() {
   readSerialFrames();
-  if (!offlineDrawn && millis() - lastValidFrameAt > kOfflineAfterMs) {
-    drawConnectionStatus(hasFrame ? "USB LOST" : "WAITING", hasFrame ? kRed : kYellow);
-    if (hasFrame) drawCodexUsage(previousFrame.codexRemainingTenths, true);
+  offlineClock.tick(millis());
+  if (millis() - lastValidFrameAt > kOfflineAfterMs) {
+#ifdef ARDUINO
+    if (!offlineDrawn) {
+      Serial.printf("MSD4 OFFLINE clock=%u date=%u weather=%u heap=%u\n",
+                    offlineClock.valid(), offlineClock.dateValid(), offlineWeather.hasWeather(), ESP.getFreeHeap());
+    }
+#endif
+    drawOfflineClock();
     applyBrightness(offlineBrightness);
     offlineDrawn = true;
   }

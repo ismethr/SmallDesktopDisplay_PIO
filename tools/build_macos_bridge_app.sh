@@ -17,7 +17,7 @@ spec_directory="${build_root}/spec"
 pyinstaller_config_directory="${build_root}/pyinstaller-config"
 python_command="${PYTHON:-${repository_root}/.venv/bin/python}"
 target_arch="${MACOS_BRIDGE_ARCH:-$(uname -m)}"
-release_version="${BRIDGE_VERSION:-1.11.0}"
+release_version="${BRIDGE_VERSION:-1.12.0}"
 product_name="MiniDisplay Bridge"
 
 if [[ ! -x "${python_command}" ]]; then

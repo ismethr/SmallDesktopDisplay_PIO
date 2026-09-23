@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import calendar
 import glob
 import json
 import math
@@ -48,6 +49,7 @@ if str(CODEX_BRIDGE_DIR) not in sys.path:
 
 import codex_usage_bridge as codex  # noqa: E402
 from bridge_settings import DisplaySettings, RevisionConflict, SettingsState, default_settings_path
+from weather_cache import WeatherCache
 
 
 DEFAULT_SERIAL_BAUD = 115200
@@ -293,6 +295,14 @@ def parse_default_route_interface(output: str) -> str | None:
     return match.group(1) if match else None
 
 
+def encode_clock_frame(now: float | None = None) -> bytes:
+    """Independent clock packet: old MSD3/MSD4 firmware safely ignores it."""
+    local = time.localtime(time.time() if now is None else now)
+    seconds = local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec
+    payload = f"MSC1,{seconds}".encode("ascii")
+    return b"$" + payload + f"*{crc16_ccitt(payload):04X}\n".encode("ascii")
+
+
 def parse_windows_default_route_interface(output: str) -> str | None:
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     return lines[0] if lines else None
@@ -367,6 +377,10 @@ def read_hardware_temperatures(
     timeout: float = DEFAULT_TEMPERATURE_TIMEOUT_SECONDS,
 ) -> TemperatureSnapshot:
     platform_name = sys.platform if platform_name is None else platform_name
+    if platform_name == "win32":
+        from windows_temperature import read_temperatures
+        cpu, gpu, source, error = read_temperatures(timeout=max(timeout, 6.0))
+        return TemperatureSnapshot(cpu, gpu, source, int(time.time()), error)
     if platform_name != "darwin":
         return TemperatureSnapshot(error="temperature sensors are unavailable on this platform")
 
@@ -770,12 +784,14 @@ def serial_writer_loop(
     baud: int,
     reconnect_seconds: float = DEFAULT_RECONNECT_SECONDS,
     runtime_settings: SettingsState | None = None,
+    weather_cache: WeatherCache | None = None,
 ) -> None:
     assert serial is not None
     active = None
     last_sequence: int | None = None
     last_error: str | None = None
     last_write_at = 0.0
+    last_weather_at = 0.0
     generation = -1
 
     def close_active() -> None:
@@ -837,7 +853,14 @@ def serial_writer_loop(
             stop_event.wait(0.1)
             continue
         try:
-            frame = encode_status_frame(snapshot)
+            frame = encode_status_frame(snapshot) + encode_clock_frame()
+            clock_payload = f'MSC2,{calendar.timegm(time.localtime())}'.encode('ascii')
+            frame += b'$' + clock_payload + f'*{crc16_ccitt(clock_payload):04X}\n'.encode('ascii')
+            if weather_cache is not None and (last_sequence is None or time.monotonic() - last_weather_at >= 30):
+                weather_payload = weather_cache.payload()
+                if weather_payload:
+                    frame += b'$' + weather_payload + f'*{crc16_ccitt(weather_payload):04X}\n'.encode('ascii')
+                last_weather_at = time.monotonic()
             if active.write(frame) != len(frame):
                 raise serial.SerialException("incomplete USB frame")
             # write_timeout bounds writes; flush()/tcdrain can block indefinitely
@@ -896,7 +919,7 @@ def make_handler(
             elif path == "/v1/overview":
                 status = status_state.get()
                 self._send_json({
-                    "app": "MiniDisplay Bridge", "version": "1.11.0",
+                    "app": "MiniDisplay Bridge", "version": "1.12.0",
                     "desktop": status.as_public_dict(),
                     "usb": usb_state.get().as_public_dict(),
                     "usage": usage_state.get().as_public_dict(),
@@ -1145,7 +1168,8 @@ def _validate_args(args: argparse.Namespace) -> str | None:
     return None
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, stop_event: threading.Event | None = None,
+         on_ready: Any = None) -> int:
     command_arguments = sys.argv[1:] if argv is None else argv
     args = build_parser().parse_args(command_arguments)
     args.auth_file = args.auth_file.expanduser()
@@ -1173,9 +1197,10 @@ def main(argv: list[str] | None = None) -> int:
         args.day_brightness, args.night_brightness, args.offline_brightness,
         args.night_start_hour, args.night_end_hour, args.serial_port,
     ), overrides)
+    weather_cache = WeatherCache(settings_state)
     if args.no_usb:
         usb_state.set(UsbSnapshot(phase="disabled", error="USB output disabled"))
-    stop_event = threading.Event()
+    stop_event = stop_event if stop_event is not None else threading.Event()
     server = codex.BridgeHTTPServer(
         (args.listen_host, args.listen_port),
         make_handler(usage_state, status_state, usb_state, settings_state),
@@ -1244,11 +1269,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     if not args.no_usb:
+        threads.append(threading.Thread(target=weather_cache.run, args=(stop_event,),
+                                        name='weather-refresh', daemon=True))
         threads.append(
             threading.Thread(
                 target=serial_writer_loop,
                 args=(status_state, usb_state, stop_event, args.serial_port, args.serial_baud,
-                      DEFAULT_RECONNECT_SECONDS, settings_state),
+                      DEFAULT_RECONNECT_SECONDS, settings_state, weather_cache),
                 name="usb-display-writer",
                 daemon=True,
             )
@@ -1268,12 +1295,15 @@ def main(argv: list[str] | None = None) -> int:
     if threading.current_thread() is threading.main_thread():
         previous_sigterm = signal.signal(signal.SIGTERM, terminate_bridge)
     try:
-        server.serve_forever(poll_interval=0.5)
+        server.timeout = 0.5
+        if on_ready is not None:
+            on_ready(server.server_port)
+        while not stop_event.is_set():
+            server.handle_request()
     except KeyboardInterrupt:
         pass
     finally:
         stop_event.set()
-        server.shutdown()
         server.server_close()
         for thread in threads:
             thread.join(timeout=2)

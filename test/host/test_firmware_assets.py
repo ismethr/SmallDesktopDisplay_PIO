@@ -106,11 +106,11 @@ class FirmwareAssetTests(unittest.TestCase):
             hashlib.sha256(canonical).hexdigest(),
         )
 
-        source = (REPOSITORY_ROOT / "src" / "SmallDesktopDisplay.cpp").read_text(
+        source = (REPOSITORY_ROOT / "src" / "core" / "ClockFontRenderer.h").read_text(
             encoding="utf-8"
         )
-        self.assertIn("pgm_read_ptr(&largeLineFont[_num])", source)
-        self.assertIn("memcpy_P(&atom, &fontOne[i], sizeof(atom))", source)
+        self.assertIn("pgm_read_ptr(&largeLineFont[digit])", source)
+        self.assertIn("memcpy_P(&atom, atoms + index, sizeof(atom))", source)
 
     def test_firmware_does_not_require_float_stdio_formats(self):
         source = (REPOSITORY_ROOT / "src" / "SmallDesktopDisplay.cpp").read_text(

@@ -65,6 +65,8 @@ $arguments = @(
     '--paths', $bridgeDirectory,
     '--paths', (Join-Path $repositoryRoot 'tools\codex_usage_bridge'),
     '--hidden-import', 'codex_usage_bridge',
+    '--hidden-import', 'pystray._win32',
+    '--icon', (Join-Path $bridgeDirectory 'assets\MiniDisplayBridgeIcon.png'),
     '--add-data', ((Join-Path $bridgeDirectory 'assets') + ':assets'),
     '--version-file', $versionInfo,
     $launcher

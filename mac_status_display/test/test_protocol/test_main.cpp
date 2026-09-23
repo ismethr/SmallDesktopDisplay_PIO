@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "status_protocol.h"
+#include "offline_clock.h"
 
 void setUp() {}
 void tearDown() {}
@@ -21,6 +22,59 @@ void test_crc_standard_vector() {
   TEST_ASSERT_EQUAL_HEX16(
       0x29B1,
       macstatus::crc16Ccitt(reinterpret_cast<const uint8_t *>(value), strlen(value)));
+}
+
+void test_clock_crc_bounds_and_no_output_mutation() {
+  char line[32];
+  uint32_t seconds = 10;
+  buildFrame("MSC1,86399", line, sizeof(line));
+  TEST_ASSERT_TRUE(macstatus::parseClockFrame(line, seconds));
+  TEST_ASSERT_EQUAL_UINT32(86399, seconds);
+  buildFrame("MSC1,86400", line, sizeof(line));
+  TEST_ASSERT_FALSE(macstatus::parseClockFrame(line, seconds));
+  TEST_ASSERT_EQUAL_UINT32(86399, seconds);
+  TEST_ASSERT_FALSE(macstatus::parseClockFrame("$MSC1,1*0000", seconds));
+  buildFrame("MSC1,+1", line, sizeof(line));
+  TEST_ASSERT_FALSE(macstatus::parseClockFrame(line, seconds));
+  buildFrame("MSC1,0", line, sizeof(line));
+  TEST_ASSERT_TRUE(macstatus::parseClockFrame(line, seconds));
+  TEST_ASSERT_EQUAL_UINT32(0, seconds);
+}
+
+void test_offline_clock_midnight_wrap_and_resync() {
+  macstatus::OfflineClock clock;
+  TEST_ASSERT_FALSE(clock.valid());
+  clock.tick(10000);
+  TEST_ASSERT_FALSE(clock.valid());
+  clock.sync(86399, UINT32_MAX - 499);
+  clock.tick(0);
+  TEST_ASSERT_EQUAL_UINT32(86399, clock.seconds());
+  clock.tick(500);
+  TEST_ASSERT_EQUAL_UINT32(0, clock.seconds());
+  clock.tick(86401500);
+  TEST_ASSERT_EQUAL_UINT32(1, clock.seconds());
+  clock.sync(43200, 123);
+  clock.tick(1123);
+  TEST_ASSERT_EQUAL_UINT32(43201, clock.seconds());
+}
+
+void test_calendar_bounds_and_date_rollover() {
+  char line[40];
+  uint32_t epoch = 7;
+  buildFrame("MSC2,1790207999", line, sizeof(line));
+  TEST_ASSERT_TRUE(macstatus::parseCalendarFrame(line, epoch));
+  macstatus::OfflineClock clock;
+  clock.syncEpoch(epoch, UINT32_MAX - 499);
+  clock.tick(500);
+  TEST_ASSERT_TRUE(clock.dateValid());
+  TEST_ASSERT_EQUAL_UINT32(epoch + 1, clock.epoch());
+  TEST_ASSERT_EQUAL_UINT32(0, clock.seconds());
+  buildFrame("MSC2,4102444800", line, sizeof(line));
+  TEST_ASSERT_FALSE(macstatus::parseCalendarFrame(line, epoch));
+  TEST_ASSERT_EQUAL_UINT32(1790207999, epoch);
+  buildFrame("MSC2,+790207999", line, sizeof(line));
+  TEST_ASSERT_FALSE(macstatus::parseCalendarFrame(line, epoch));
+  TEST_ASSERT_FALSE(macstatus::validAuxFrame("$MSW1,{}*0000", "$MSW1,"));
 }
 
 void test_valid_frame() {
@@ -108,6 +162,9 @@ void test_out_of_range_and_extra_fields_are_rejected() {
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_crc_standard_vector);
+  RUN_TEST(test_clock_crc_bounds_and_no_output_mutation);
+  RUN_TEST(test_offline_clock_midnight_wrap_and_resync);
+  RUN_TEST(test_calendar_bounds_and_date_rollover);
   RUN_TEST(test_valid_frame);
   RUN_TEST(test_missing_codex_usage);
   RUN_TEST(test_legacy_msd3_frame_maps_missing_temperatures);

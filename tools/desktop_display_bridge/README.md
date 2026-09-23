@@ -12,7 +12,7 @@ CPU、内存和网卡计数统一由 [psutil](https://github.com/giampaolo/psuti
 | --- | --- | --- |
 | 默认网卡 | 系统默认路由接口 | 系统路由探测，必要时回退到 `Get-NetRoute` |
 | 串口 | `/dev/cu.usbserial-*` 等 USB 串口 | `COM` 口及 USB VID/描述识别 |
-| CPU/GPU 温度 | App 内置只读 AppleSMC 读取器；不控制风扇、不要求管理员权限 | 暂不采集，屏幕显示 `--°C` |
+| CPU/GPU 温度 | App 内置只读 AppleSMC 读取器；不控制风扇、不要求管理员权限 | LibreHardwareMonitor 本机接口；兼容旧版 WMI 和 NVIDIA nvidia-smi |
 | 网络位置 | 通过公网出口 IP 显示国家/地区缩写 | 同 macOS |
 | Codex 用量 | 优先调用 ChatGPT/Codex 自带的本机 App Server | 优先调用 Codex 自带的本机 App Server |
 
@@ -68,9 +68,28 @@ DESKTOP_BRIDGE_SERIAL_PORT=/dev/cu.usbserial-2140 \
 
 ## Windows 安装与运行
 
+### 安装包（推荐）
+
+使用 `MiniDisplayBridge-1.12.0-windows-x64-setup.exe`，按当前用户安装，支持 Windows 10/11 x64。
+可选桌面快捷方式与登录自启，支持升级和卸载，保留亮度与串口设置。
+安装包包含 LibreHardwareMonitor 0.9.6 库及本项目只读采集程序，右键托盘选择“启动温度采集（管理员）”。
+首次从 PawnIO 官方发布页安装驱动。采集仅提供 `127.0.0.1:18765/sensors` 的只读接口，随 Bridge 退出，不启用上游 GUI Web Server。
+详见 [Windows 使用说明](WINDOWS_QUICKSTART.md)。
+
+先安装构建依赖，然后运行以下命令。若未发现 Inno Setup，脚本会下载并校验官方固定版本 6.7.3，安装到 `build/toolchain/inno`；也可通过 `-Iscc` 指定现有编译器。
+
+```powershell
+.\tools\build_windows_bridge_installer.ps1
+```
+
+安装包、SHA-256 与对应源码 ZIP 位于 `build\packages`。构建脚本校验固定版本传感器组件的 SHA-256，并收集第三方许可。
+
+新版状态屏固件支持完整断联天气时钟：桥接通过 `MSC1`/`MSC2` 同步本地时间和日期，通过 `MSW1` 同步天气缓存。4 秒无系统数据后显示原版天气、日期和动画页面，重连恢复状态页。电脑每 30 分钟更新天气，小屏离线使用最后的缓存，无需 Wi-Fi。
+需要持续供电；断电重启后需重新连接电脑校时。旧 `MSD3`/`MSD4` 固件会忽略时钟包，不影响原有状态更新。
+
 ### 单文件后台 EXE
 
-发布包中的 `SmallDesktopDisplayBridge.exe` 不需要 Python 环境。双击后没有控制台窗口，会自动发现唯一的 CH340/USB 串口并在后台运行；重复启动会提示已有实例。EXE 不包含 Codex 凭据，运行时只读取当前 Windows 用户的 `%USERPROFILE%\.codex\auth.json`。
+发布包中的 `SmallDesktopDisplayBridge.exe` 不需要 Python 环境。双击打开本机面板并常驻托盘，自动发现唯一的 CH340/USB 串口；重复启动打开已有实例。右键托盘可打开设置、日志和退出。EXE 不包含 Codex 凭据，运行时使用当前用户的 Codex 登录状态。
 
 运行日志位于：
 
@@ -78,10 +97,10 @@ DESKTOP_BRIDGE_SERIAL_PORT=/dev/cu.usbserial-2140 \
 %LOCALAPPDATA%\SmallDesktopDisplay\logs\bridge.log
 ```
 
-可在浏览器打开 [本机状态页面](http://127.0.0.1:8766/) 检查状态。要停止后台程序，可在任务管理器结束 `SmallDesktopDisplayBridge.exe`，或执行：
+可在浏览器打开 [本机状态页面](http://127.0.0.1:8766/) 检查状态。要停止后台程序，可从托盘退出，或执行：
 
 ```powershell
-Get-Process SmallDesktopDisplayBridge -ErrorAction SilentlyContinue | Stop-Process
+.\SmallDesktopDisplayBridge.exe --stop
 ```
 
 从源码构建单文件 EXE：
@@ -106,7 +125,7 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe tools\desktop_display_bridge\desktop_display_bridge.py
 ```
 
-仓库根目录还提供 [`run_windows_bridge.cmd`](../../run_windows_bridge.cmd)。依赖安装完成后可直接双击运行，默认使用 `COM5`；窗口必须保持打开，按 `Ctrl+C` 可停止。也可以先设置 `DESKTOP_BRIDGE_SERIAL_PORT` 环境变量覆盖默认端口。
+仓库根目录还提供 [`run_windows_bridge.cmd`](../../run_windows_bridge.cmd)。依赖安装完成后可直接双击运行，默认自动识别 USB 串口；窗口必须保持打开，按 `Ctrl+C` 可停止。也可以先设置 `DESKTOP_BRIDGE_SERIAL_PORT` 环境变量指定端口。
 
 只有一个 USB 串口适配器时会自动选择。可用以下命令查看端口，并在多个 USB 串口并存时明确指定：
 

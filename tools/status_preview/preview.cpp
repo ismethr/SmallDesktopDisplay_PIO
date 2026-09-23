@@ -32,9 +32,13 @@ int main(int argc,char **argv) {
   frame.cpuTemperatureTenths=frame.gpuTemperatureTenths=macstatus::kMissingTemperature;
   frame.codexRemainingTenths=macstatus::kMissingCodexUsage;strcpy(frame.networkLocation,"--");drawFrame(frame);
   display.save(directory+"/missing.ppm");
-  previewMillis()=5000;loop();display.save(directory+"/offline.ppm");
+  previewMillis()=5000;loop();display.save(directory+"/offline-unsynced.ppm");
+  assert(!offlineClock.valid());
+  offlineDrawn=false;offlineClock.sync(86399,5000);loop();display.save(directory+"/offline.ppm");
+  before=display.writes;loop();assert(display.writes==before);
+  previewMillis()=6000;loop();assert(offlineClock.seconds()==0);display.save(directory+"/midnight.ppm");
   drawFrame(frame);assert(!offlineDrawn);display.save(directory+"/reconnected.ppm");
   // Timers must keep working over the uint32_t millis wrap boundary.
   lastValidFrameAt=UINT32_MAX-1000;previewMillis()=3500;loop();assert(offlineDrawn);
-  std::cout<<"7 real-code previews; bounds, text overlap, unchanged-frame, reconnect and timer checks passed\n";
+  std::cout<<"9 real-code previews; bounds, overlap, clock, reconnect and timer checks passed\n";
 }

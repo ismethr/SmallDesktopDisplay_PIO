@@ -49,6 +49,7 @@
 #include "Animate/Animate.h"         //动画模块
 #include "font/font_td_20.h"         //字体库
 #include "core/DisplayLogic.h"       //纯逻辑与边界校验
+#include "core/ClockFontRenderer.h"
 
 #define Version "SDD V1.8.0"
 /* *****************************************************************
@@ -1914,41 +1915,7 @@ void scrollBanner()
 // 用快速线方法绘制数字
 void drawLineFont(uint32_t _x, uint32_t _y, uint32_t _num, uint32_t _size, uint32_t _color)
 {
-  uint8_t fontSize;
-  const LineAtom *fontOne;
-  // 小号(9*14)
-  if (_size == 1)
-  {
-    fontOne = reinterpret_cast<const LineAtom *>(pgm_read_ptr(&smallLineFont[_num]));
-    fontSize = pgm_read_byte(&smallLineFont_size[_num]);
-    // 绘制前清理字体绘制区域
-    tft.fillRect(_x, _y, 9, 14, TFT_BLACK);
-  }
-  // 中号(18*30)
-  else if (_size == 2)
-  {
-    fontOne = reinterpret_cast<const LineAtom *>(pgm_read_ptr(&middleLineFont[_num]));
-    fontSize = pgm_read_byte(&middleLineFont_size[_num]);
-    // 绘制前清理字体绘制区域
-    tft.fillRect(_x, _y, 18, 30, TFT_BLACK);
-  }
-  // 大号(36*90)
-  else if (_size == 3)
-  {
-    fontOne = reinterpret_cast<const LineAtom *>(pgm_read_ptr(&largeLineFont[_num]));
-    fontSize = pgm_read_byte(&largeLineFont_size[_num]);
-    // 绘制前清理字体绘制区域
-    tft.fillRect(_x, _y, 36, 90, TFT_BLACK);
-  }
-  else
-    return;
-
-  for (uint8_t i = 0; i < fontSize; i++)
-  {
-    LineAtom atom;
-    memcpy_P(&atom, &fontOne[i], sizeof(atom));
-    tft.drawFastHLine(atom.xValue + _x, atom.yValue + _y, atom.lValue, _color);
-  }
+  sdd::drawClockDigit(tft, _x, _y, _num, _size, static_cast<uint16_t>(_color));
 }
 
 int Hour_sign = 60;

@@ -23,6 +23,7 @@ header{display:flex;align-items:center;gap:18px;margin-bottom:30px}header img{wi
     <section class="card network"><div class="label">NETWORK / 实时速率</div><div class="pair"><div><div class="value" id="download">--</div><div class="caption">↓ 下载</div></div><div><div class="value" id="upload">--</div><div class="caption">↑ 上传</div></div></div><div class="details"><span>默认网卡 <b id="interface">--</b></span></div></section>
     <section class="card network"><div class="label">DISPLAY / 小屏状态</div><div class="value" id="location">--</div><div class="caption" id="location-detail">公网出口位置</div><div class="details"><span>亮度 <b id="brightness">--</b></span><span>模式 <b id="mode">--</b></span></div></section>
   </div>
+  <aside class="help" id="temperature-help" hidden><strong>Windows 温度采集</strong><p id="temperature-detail"></p><p>右键右下角托盘图标 → 启动温度采集。首次使用可从托盘打开 PawnIO 官方下载页安装驱动。采集会随连接程序退出。</p></aside>
   <aside class="help"><strong id="help-title">连接提示</strong><p id="help-text">连接一块 USB 状态屏后会自动识别。多个 USB 串口同时连接时，需要明确指定状态屏端口。</p></aside>
   <section class="settings card" id="settings" aria-labelledby="settings-title">
     <div class="settings-heading"><div><h2 id="settings-title">显示屏设置</h2><p>保存到这台电脑，下次启动自动恢复；无需重新刷固件。</p></div><button id="settings-reload" type="button" title="重新读取已保存设置，放弃尚未保存的修改">重新加载</button></div>
@@ -34,6 +35,7 @@ header{display:flex;align-items:center;gap:18px;margin-bottom:30px}header img{wi
         <div class="setting"><label id="night-hours-label">夜间时段</label><div class="hours"><select id="night_start_hour" aria-label="夜间开始时间"></select><span>至</span><select id="night_end_hour" aria-label="夜间结束时间"></select></div><small>支持跨午夜；开始与结束相同即关闭夜间调暗。</small></div>
         <div class="setting wide"><label for="serial_port">USB 状态屏端口</label><select id="serial_port"><option value="">自动识别（仅连接一个 USB 串口时）</option></select><small>只选择系统状态屏，不要选择天气屏。更换端口后会自动重新连接；插入新设备后可点“重新加载”更新列表。</small></div>
       </div>
+      <div class="setting"><label for="weather_city_code">断联天气城市代码</label><input id="weather_city_code" inputmode="numeric" maxlength="9" value="0"><small>填 0 按电脑网络位置识别，或填中国天气网的 9 位城市代码。电脑每 30 分钟同步一次；断联后保留最后的天气。</small></div>
       <div class="settings-actions"><button class="primary" id="settings-save" type="submit">保存并应用</button><button id="reconnect" type="button">重新连接 USB</button></div>
     </fieldset></form><p class="settings-message" id="settings-message" role="status">正在读取设置…</p>
   </section>
@@ -52,12 +54,14 @@ function flag(location){const country=(location||'').split('-')[0];return /^[A-Z
 function moment(seconds){return number(seconds)?new Date(seconds*1000).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'--';}
 function render(data){
  const d=data.desktop,u=data.usage,usb=data.usb;
+ $('temperature-help').hidden=d.host_platform!=='Windows'||!d.temperature_error;
+ text('temperature-detail',d.temperature_error||'温度数据已同步。');
  const active=usb.connected&&d.ok&&number(usb.last_sent_at)&&Date.now()/1000-usb.last_sent_at<5;
  $('connection').classList.toggle('warn',!active);
  const titles={waiting:'等待 USB 小屏',connecting:'正在建立 USB 连接',retrying:'连接中断，正在重试','waiting-data':'等待系统数据',disabled:'仅采集模式',stopped:'桥接已停止'};
  const explanations={waiting:'请连接 USB 数据线，程序会自动识别状态屏。',connecting:'正在等待设备就绪，通常需要两秒。',retrying:'USB 可能已断开或被其他程序占用，正在自动重试。','waiting-data':'系统采集暂不可用，正在重新采集。',disabled:'当前只读取电脑状态，没有向 USB 小屏发送数据。',stopped:'请重新打开 MiniDisplay Bridge。'};
  text('connection-title',active?'小屏已连接 · 正在发送数据':titles[usb.phase]||'连接暂不可用');
- text('connection-detail',active?'端口 '+(usb.port||'--')+' · 系统数据持续发送':(usb.error||'').includes('multiple')?'检测到多个 USB 串口，请在启动参数中指定状态屏端口。':explanations[usb.phase]||'请稍候，程序会自动尝试恢复连接。');
+ text('connection-detail',active?'端口 '+(usb.port||'--')+' · 系统数据持续发送':(usb.error||'').includes('multiple')?'检测到多个 USB 串口，请在下方“显示屏设置”选择状态屏端口。':explanations[usb.phase]||'请稍候，程序会自动尝试恢复连接。');
  text('version','v'+data.version+' · '+(d.host_platform==='Darwin'?'macOS':d.host_platform));
  text('cpu',d.ok?percent(d.cpu_percent):'--');text('memory',d.ok?percent(d.memory_percent):'--');
  text('cpu-temp',d.ok?temperature(d.cpu_temperature_celsius):'--');text('gpu-temp',d.ok?temperature(d.gpu_temperature_celsius):'--');
@@ -86,7 +90,7 @@ const hourFields=['night_start_hour','night_end_hour'];
 let settingsToken='',settingsRevision=0,settingsBusy=false;
 for(const id of hourFields){for(let hour=0;hour<24;hour++)$(id).add(new Option(String(hour).padStart(2,'0')+':00',String(hour)));}
 function settingsMessage(message,error=false){text('settings-message',message);$('settings-message').classList.toggle('error',error);}
-function settingsValues(){const values={};for(const id of [...brightnessFields,...hourFields])values[id]=Number($(id).value);values.serial_port=$('serial_port').value||null;return values;}
+function settingsValues(){const values={};for(const id of [...brightnessFields,...hourFields])values[id]=Number($(id).value);values.serial_port=$('serial_port').value||null;values.weather_city_code=$('weather_city_code').value.trim();return values;}
 function showSettings(data){
  settingsToken=data.token;settingsRevision=data.revision;
  for(const id of [...brightnessFields,...hourFields])$(id).value=data.settings[id];
@@ -94,6 +98,7 @@ function showSettings(data){
  $('serial_port').replaceChildren(new Option('自动识别（仅连接一个 USB 串口时）',''));
  for(const port of data.ports)$('serial_port').add(new Option(port,port));
  $('serial_port').value=data.settings.serial_port||'';
+ $('weather_city_code').value=data.settings.weather_city_code||'0';
 }
 async function settingsRequest(path,body){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),5000);
@@ -112,7 +117,7 @@ async function settingsAction(action){
  finally{settingsBusy=false;$('settings-fields').disabled=!settingsToken;$('settings-reload').disabled=false;}
 }
 async function loadSettings(){await settingsAction(async()=>{const data=await settingsRequest('/v1/settings');showSettings(data);settingsMessage(data.warning||'调整后点击“保存并应用”；自动刷新状态不会覆盖未保存的修改。',!!data.warning);});}
-for(const id of [...brightnessFields,...hourFields,'serial_port'])$(id).addEventListener('input',()=>{
+for(const id of [...brightnessFields,...hourFields,'serial_port','weather_city_code'])$(id).addEventListener('input',()=>{
  if(brightnessFields.includes(id))text(id+'-value',$(id).value+'%');
  settingsMessage('有未保存的修改。');
 });

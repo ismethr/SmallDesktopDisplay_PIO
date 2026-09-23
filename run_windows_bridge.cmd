@@ -16,9 +16,7 @@ if not exist "%BRIDGE_PYTHON%" (
   goto :failed
 )
 
-if not defined DESKTOP_BRIDGE_SERIAL_PORT set "DESKTOP_BRIDGE_SERIAL_PORT=COM5"
-
-echo Starting SmallDesktopDisplay bridge on %DESKTOP_BRIDGE_SERIAL_PORT%...
+echo Starting SmallDesktopDisplay bridge (USB port auto-detection enabled)...
 echo Keep this window open. Press Ctrl+C to stop the bridge.
 echo.
 "%BRIDGE_PYTHON%" -B "%BRIDGE_SCRIPT%" %*

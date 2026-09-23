@@ -67,6 +67,10 @@ class DisplayFontCoverageTests(unittest.TestCase):
         missing = sorted({char for char in "呈贡" if char not in self.weather_glyphs})
         self.assertEqual([], missing, f"missing current city glyphs: {missing!r}")
 
+    def test_usb_cached_weather_page_labels_are_supported(self):
+        labels = 'WEATHER WAIT AQI -- 天气时间风向最低温度最高温度℃优良轻度中度重度严重'
+        self.assertEqual([], sorted({c for c in labels if c != ' ' and c not in self.weather_glyphs}))
+
     def test_calendar_font_exactly_matches_its_manifest(self):
         manifest = (
             REPOSITORY_ROOT / "src" / "font" / "font_td_20_chars.txt"

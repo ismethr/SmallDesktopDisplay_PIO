@@ -11,6 +11,10 @@ MiniDisplay 是一块通过 USB 驱动的桌面系统状态小屏，沿用 ESP82
 
 macOS 端提供 `x86_64` 与 `arm64` 两种原生构建，Windows 端提供 x64 构建。macOS 桥接常驻菜单栏，不占用 Dock；点击小屏图标即可打开状态与设置面板，并会自动发现常见的 CH340 USB 串口。
 
+Windows 1.12 新增安装包、系统托盘与可选登录自启，并附带 Windows 温度采集组件。新版 USB 状态屏断联 4 秒后自动显示原项目的完整天气、日期和动画时钟页，天气由电脑缓存，无需为小屏配置 Wi-Fi；重连恢复系统状态。需持续供电，断电后重新连接校时。详见 [Windows 安装与使用](tools/desktop_display_bridge/WINDOWS_QUICKSTART.md)。
+
+[下载 v1.12.0 安装包与固件](https://github.com/ismethr/SmallDesktopDisplay_PIO/releases/tag/v1.12.0) · [版本说明](.github/release-notes/v1.12.0.md)
+
 ## 小屏能显示什么
 
 | 区域 | 显示内容 |
