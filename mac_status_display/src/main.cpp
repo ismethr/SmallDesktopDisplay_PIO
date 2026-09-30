@@ -3,6 +3,7 @@
 
 #include "status_protocol.h"
 #include "offline_clock.h"
+#include "ai_usage_protocol.h"
 #include "../../src/img/chatgpt_24.h"
 #include "../../src/core/ClockFontRenderer.h"
 #ifdef ARDUINO
@@ -23,6 +24,7 @@ constexpr uint16_t kYellow = 0xF5C0;
 constexpr uint16_t kRed = 0xF9E7;
 constexpr uint16_t kBlue = 0x45BF;
 constexpr uint16_t kPurple = 0xA35F;
+constexpr uint16_t kClaude = 0xDBAA;
 constexpr uint16_t flagPanelColor(uint16_t rgb565) {
   return static_cast<uint16_t>(((rgb565 & 0xF800U) >> 11) |
                                (rgb565 & 0x07E0U) |
@@ -55,8 +57,12 @@ macstatus::StatusFrame previousFrame;
 macstatus::OfflineClock offlineClock;
 uint32_t drawnClockSecond = UINT32_MAX;
 bool drawnClockValid = false;
+macstatus::ClaudeUsageFrame claudeUsage;
+uint32_t lastClaudeFrameAt = 0;
+bool hasClaudeFrame = false;
 
 void drawCodexUsage(int16_t remainingTenths, bool stale);
+void drawClaudeUsage();
 void drawLoad(int16_t x, const char *label, int16_t tenths);
 void drawTemperature(int16_t x, const char *label, int16_t tenths);
 void drawNetwork(uint32_t download, uint32_t upload, const char *location,
@@ -123,20 +129,21 @@ void drawStaticInterface() {
   display.setTextSize(1);
   display.setTextColor(TFT_WHITE, kBackground);
   display.drawString("MINIDISPLAY", 10, 18);
-  display.drawFastHLine(8, 32, 224, kPanelBorder);
+  display.drawFastHLine(8, 30, 224, kPanelBorder);
 
-  drawDashedBorder(8, 40, 224, 94, kPanelBorder);
-  drawDashedVerticalLine(120, 48, 78, kPanelBorder);
-  drawDashedHorizontalLine(16, 105, 208, kPanelBorder);
+  display.drawRoundRect(8, 36, 224, 79, 6, kPanelBorder);
+  display.drawFastVLine(120, 44, 63, kPanelBorder);
   drawLoad(16, "CPU", -1);
   drawLoad(132, "MEMORY", -1);
   drawTemperature(16, "CPU", macstatus::kMissingTemperature);
   drawTemperature(132, "GPU", macstatus::kMissingTemperature);
 
-  drawDashedBorder(8, 141, 224, 45, kPanelBorder);
+  display.drawRoundRect(8, 121, 108, 66, 6, kPanelBorder);
+  display.drawRoundRect(124, 121, 108, 66, 6, kPanelBorder);
+  drawClaudeUsage();
   drawCodexUsage(macstatus::kMissingCodexUsage, false);
 
-  drawDashedBorder(8, 193, 224, 39, kPanelBorder);
+  display.drawRoundRect(8, 193, 224, 39, 6, kPanelBorder);
   display.setTextFont(1);
   display.setTextDatum(TL_DATUM);
   display.setTextColor(kGreen, kBackground);
@@ -145,8 +152,8 @@ void drawStaticInterface() {
   display.drawString("DOWN", 94, 198);
   display.setTextColor(kPurple, kBackground);
   display.drawString("UP", 170, 198);
-  drawDashedVerticalLine(82, 199, 27, kPanelBorder);
-  drawDashedVerticalLine(157, 199, 27, kPanelBorder);
+  display.drawFastVLine(82, 201, 23, kPanelBorder);
+  display.drawFastVLine(157, 201, 23, kPanelBorder);
   drawNetwork(0, 0, "--", false);
   drawConnectionStatus("WAITING", kYellow);
 }
@@ -164,12 +171,12 @@ uint16_t temperatureColor(int16_t tenths) {
 }
 
 void drawLoad(int16_t x, const char *label, int16_t tenths) {
-  display.fillRect(x, 47, 92, 55, kBackground);
+  display.fillRect(x, 41, 92, 51, kBackground);
   display.setTextDatum(TL_DATUM);
   display.setTextFont(1);
   display.setTextSize(1);
   display.setTextColor(kMuted, kBackground);
-  display.drawString(label, x, 48);
+  display.drawString(label, x, 42);
   char loadValue[8];
   if (tenths < 0) snprintf(loadValue, sizeof(loadValue), "--");
   else snprintf(loadValue, sizeof(loadValue), "%u%%",
@@ -177,19 +184,19 @@ void drawLoad(int16_t x, const char *label, int16_t tenths) {
   display.setTextFont(2);
   display.setTextSize(2);
   display.setTextColor(TFT_WHITE, kBackground);
-  display.drawString(loadValue, x, 59);
+  display.drawString(loadValue, x, 51);
   display.setTextSize(1);
-  drawProgressBar(x, 94, 92, tenths < 0 ? 0 : tenths,
+  drawProgressBar(x, 85, 92, tenths < 0 ? 0 : tenths,
                   tenths < 0 ? kMuted : loadColor(tenths));
 }
 
 void drawTemperature(int16_t x, const char *label, int16_t tenths) {
-  display.fillRect(x, 110, 92, 18, kBackground);
+  display.fillRect(x, 95, 92, 18, kBackground);
   display.setTextSize(1);
   display.setTextFont(1);
   display.setTextDatum(ML_DATUM);
   display.setTextColor(kMuted, kBackground);
-  display.drawString(label, x, 119);
+  display.drawString(label, x, 104);
   const bool validTemperature = tenths != macstatus::kMissingTemperature;
   const uint16_t color = validTemperature ? temperatureColor(tenths) : kMuted;
   char temperatureValue[10];
@@ -203,7 +210,7 @@ void drawTemperature(int16_t x, const char *label, int16_t tenths) {
   display.setTextFont(2);
   display.setTextSize(1);
   display.setTextColor(color, kBackground);
-  display.drawString(temperatureValue, x + 92, 119);
+  display.drawString(temperatureValue, x + 92, 104);
 }
 
 void formatRate(uint32_t bytesPerSecond, char *output, size_t outputSize) {
@@ -420,51 +427,41 @@ void drawChatGptIcon(int16_t x, int16_t y, uint16_t color) {
   }
 }
 
-void drawCodexUsage(int16_t remainingTenths, bool stale) {
-  const bool valid = remainingTenths != macstatus::kMissingCodexUsage;
-  uint16_t color = kMuted;
-  if (valid && !stale) {
-    color = remainingTenths >= 400 ? kGreen : (remainingTenths >= 150 ? kYellow : kRed);
-  }
-
-  display.fillRect(14, 145, 212, 36, kBackground);
-  drawChatGptIcon(17, 151, valid && !stale ? TFT_WHITE : kMuted);
-
-  display.setTextDatum(ML_DATUM);
+void drawUsageCard(int16_t x, const char *label, int16_t remaining, bool stale,
+                   const char *detail, uint16_t accent) {
+  const bool valid = remaining >= 0;
+  display.fillRect(x + 6, 125, 96, 58, kBackground);
+  display.setTextDatum(TL_DATUM);
   display.setTextFont(1);
   display.setTextSize(1);
-  display.setTextColor(stale ? kMuted : TFT_WHITE, kBackground);
-  display.drawString("CODEX WEEK", 49, 150);
-  display.setTextColor(kMuted, kBackground);
-  display.drawString(!valid ? "WAITING" : (stale ? "CACHED" : "REMAINING"), 49, 162);
-
+  display.setTextColor(accent, kBackground);
+  display.drawString(label, x + 8, 127);
   char value[8];
-  if (valid) {
-    snprintf(value, sizeof(value), "%u%%",
-             static_cast<unsigned>((remainingTenths + 5) / 10));
-  } else {
-    snprintf(value, sizeof(value), "--");
-  }
-  display.setTextDatum(MR_DATUM);
+  if (valid) snprintf(value, sizeof(value), "%u%%", static_cast<unsigned>((remaining + 5) / 10));
+  else snprintf(value, sizeof(value), "--");
   display.setTextFont(2);
   display.setTextSize(2);
   display.setTextColor(valid && !stale ? TFT_WHITE : kMuted, kBackground);
-  display.drawString(value, 221, 162);
+  display.drawString(value, x + 8, 136);
+  display.setTextFont(1);
   display.setTextSize(1);
+  display.setTextColor(kMuted, kBackground);
+  display.drawString(detail, x + 8, 171);
+  // A small freshness marker leaves the window labels visible at all times.
+  display.fillCircle(x + 96, 131, 2, valid ? (stale ? kYellow : accent) : kPanelBorder);
+}
 
-  constexpr int16_t kBarX = 49;
-  constexpr int16_t kBarY = 173;
-  constexpr int16_t kBarWidth = 94;
-  display.drawRoundRect(kBarX, kBarY, kBarWidth, 7, 3, kPanelBorder);
-  if (valid && remainingTenths > 0) {
-    const int16_t filled = static_cast<int16_t>(
-        (static_cast<uint32_t>(kBarWidth - 2) * remainingTenths + 500U) / 1000U);
-    if (filled >= 4) {
-      display.fillRoundRect(kBarX + 1, kBarY + 1, filled, 5, 2, color);
-    } else {
-      display.fillRect(kBarX + 1, kBarY + 1, filled, 5, color);
-    }
-  }
+void drawCodexUsage(int16_t remainingTenths, bool stale) {
+  drawUsageCard(8, "CODEX", remainingTenths, stale,
+                remainingTenths < 0 ? "WEEK --" : stale ? "WEEK CACHED" : "WEEK LEFT", kGreen);
+}
+
+void drawClaudeUsage() {
+  char detail[17];
+  if (claudeUsage.weekTenths < 0) snprintf(detail, sizeof(detail), "7D --");
+  else snprintf(detail, sizeof(detail), "7D %u%%%s", static_cast<unsigned>((claudeUsage.weekTenths + 5) / 10),
+                claudeUsage.stale ? " OLD" : " LEFT");
+  drawUsageCard(124, "CLAUDE 5H", claudeUsage.fiveHourTenths, claudeUsage.stale, detail, kClaude);
 }
 
 void drawNetwork(uint32_t download, uint32_t upload, const char *location,
@@ -522,7 +519,10 @@ void drawFrame(const macstatus::StatusFrame &frame) {
       frame.networkLocationStale != previousFrame.networkLocationStale)
     drawNetwork(frame.downloadBytesPerSecond, frame.uploadBytesPerSecond,
                 frame.networkLocation, frame.networkLocationStale);
-  if (refresh) drawConnectionStatus("USB LIVE", kGreen);
+  if (refresh) {
+    drawConnectionStatus("USB LIVE", kGreen);
+    drawClaudeUsage();
+  }
   previousFrame = frame;
   offlineDrawn = false;
 }
@@ -587,12 +587,23 @@ void processLine() {
   serialBuffer[serialLength] = '\0';
 #ifdef ARDUINO
   if (macstatus::validAuxFrame(serialBuffer, "$MSQ1*")) {
-    Serial.printf("MSQ1 offline=%u clock=%u date=%u weather=%u epoch=%u heap=%u\n",
+    Serial.printf("MSQ1 offline=%u clock=%u date=%u weather=%u epoch=%u heap=%u claude5=%d claude7=%d claude_stale=%u\n",
                   offlineDrawn, offlineClock.valid(), offlineClock.dateValid(),
-                  offlineWeather.hasWeather(), offlineClock.epoch(), ESP.getFreeHeap());
+                  offlineWeather.hasWeather(), offlineClock.epoch(), ESP.getFreeHeap(),
+                  claudeUsage.fiveHourTenths, claudeUsage.weekTenths, claudeUsage.stale);
     return;
   }
 #endif
+  macstatus::ClaudeUsageFrame incomingClaude;
+  if (macstatus::parseClaudeUsageFrame(serialBuffer, incomingClaude)) {
+    const bool changed = incomingClaude.fiveHourTenths != claudeUsage.fiveHourTenths ||
+        incomingClaude.weekTenths != claudeUsage.weekTenths || incomingClaude.stale != claudeUsage.stale;
+    claudeUsage = incomingClaude;
+    hasClaudeFrame = true;
+    lastClaudeFrameAt = millis();
+    if (changed && hasFrame && !offlineDrawn) drawClaudeUsage();
+    return;
+  }
   uint32_t clockSeconds = 0;
   if (macstatus::parseCalendarFrame(serialBuffer, clockSeconds)) {
     offlineClock.syncEpoch(clockSeconds, millis());
@@ -663,12 +674,17 @@ void setup() {
 #endif
   drawStaticInterface();
   lastValidFrameAt = millis();
-  Serial.println("MSD4 READY");
+  Serial.println("MSD4 READY AI1");
 }
 
 void loop() {
   readSerialFrames();
   offlineClock.tick(millis());
+  if (hasClaudeFrame && millis() - lastClaudeFrameAt > 15000) {
+    hasClaudeFrame = false;
+    claudeUsage = macstatus::ClaudeUsageFrame();
+    if (!offlineDrawn) drawClaudeUsage();
+  }
   if (millis() - lastValidFrameAt > kOfflineAfterMs) {
 #ifdef ARDUINO
     if (!offlineDrawn) {

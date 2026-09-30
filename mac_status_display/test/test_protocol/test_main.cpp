@@ -5,6 +5,7 @@
 
 #include "status_protocol.h"
 #include "offline_clock.h"
+#include "ai_usage_protocol.h"
 
 void setUp() {}
 void tearDown() {}
@@ -15,6 +16,27 @@ void buildFrame(const char *payload, char *output, size_t outputSize) {
   const uint16_t crc = macstatus::crc16Ccitt(
       reinterpret_cast<const uint8_t *>(payload), strlen(payload));
   snprintf(output, outputSize, "$%s*%04X", payload, crc);
+}
+
+void test_claude_aux_frame_validation() {
+  macstatus::ClaudeUsageFrame frame;
+  char line[80];
+  buildFrame("MSA1,0,1000,0", line, sizeof(line));
+  TEST_ASSERT_TRUE(macstatus::parseClaudeUsageFrame(line, frame));
+  TEST_ASSERT_EQUAL_INT16(0, frame.fiveHourTenths);
+  TEST_ASSERT_EQUAL_INT16(1000, frame.weekTenths);
+  const char *bad[] = {"MSA1,,100,0", "MSA1,1,2,0,0", "MSA1,-2,2,0", "MSA1,1001,2,0",
+                      "MSA1,1,2,2", "MSA1,+1,2,0", "MSA1, 1,2,0", "MSA1,1,2,", "MSA1,1,2,0,"};
+  for (const char *payload : bad) {
+    buildFrame(payload, line, sizeof(line));
+    TEST_ASSERT_FALSE(macstatus::parseClaudeUsageFrame(line, frame));
+    TEST_ASSERT_EQUAL_INT16(1000, frame.weekTenths);
+  }
+  TEST_ASSERT_FALSE(macstatus::parseClaudeUsageFrame("$MSA1,1,2,0*FFFF", frame));
+  buildFrame("MSA1,-1,-1,1", line, sizeof(line));
+  TEST_ASSERT_TRUE(macstatus::parseClaudeUsageFrame(line, frame));
+  TEST_ASSERT_EQUAL_INT16(-1, frame.fiveHourTenths);
+  TEST_ASSERT_TRUE(frame.stale);
 }
 
 void test_crc_standard_vector() {
@@ -162,6 +184,7 @@ void test_out_of_range_and_extra_fields_are_rejected() {
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_crc_standard_vector);
+  RUN_TEST(test_claude_aux_frame_validation);
   RUN_TEST(test_clock_crc_bounds_and_no_output_mutation);
   RUN_TEST(test_offline_clock_midnight_wrap_and_resync);
   RUN_TEST(test_calendar_bounds_and_date_rollover);

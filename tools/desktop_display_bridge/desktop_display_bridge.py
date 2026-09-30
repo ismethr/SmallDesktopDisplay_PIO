@@ -50,6 +50,7 @@ if str(CODEX_BRIDGE_DIR) not in sys.path:
 import codex_usage_bridge as codex  # noqa: E402
 from bridge_settings import DisplaySettings, RevisionConflict, SettingsState, default_settings_path
 from weather_cache import WeatherCache
+from claude_usage import ClaudeUsageState
 
 
 DEFAULT_SERIAL_BAUD = 115200
@@ -776,6 +777,14 @@ def discover_serial_port(
     return None, "multiple USB serial devices; configure DESKTOP_BRIDGE_SERIAL_PORT"
 
 
+def encode_claude_frame(usage: dict[str, Any]) -> bytes:
+    def remaining(key: str) -> int:
+        window = usage.get(key)
+        return round(window["remaining_percent"] * 10) if window else -1
+    payload = f'MSA1,{remaining("five_hour")},{remaining("seven_day")},{int(usage["stale"])}'.encode('ascii')
+    return b'$' + payload + f'*{crc16_ccitt(payload):04X}\n'.encode('ascii')
+
+
 def serial_writer_loop(
     status_state: DesktopStatusState,
     usb_state: UsbState,
@@ -785,6 +794,7 @@ def serial_writer_loop(
     reconnect_seconds: float = DEFAULT_RECONNECT_SECONDS,
     runtime_settings: SettingsState | None = None,
     weather_cache: WeatherCache | None = None,
+    claude_state: ClaudeUsageState | None = None,
 ) -> None:
     assert serial is not None
     active = None
@@ -854,6 +864,8 @@ def serial_writer_loop(
             continue
         try:
             frame = encode_status_frame(snapshot) + encode_clock_frame()
+            if claude_state is not None:
+                frame += encode_claude_frame(claude_state.get())
             clock_payload = f'MSC2,{calendar.timegm(time.localtime())}'.encode('ascii')
             frame += b'$' + clock_payload + f'*{crc16_ccitt(clock_payload):04X}\n'.encode('ascii')
             if weather_cache is not None and (last_sequence is None or time.monotonic() - last_weather_at >= 30):
@@ -894,6 +906,7 @@ def make_handler(
     status_state: DesktopStatusState,
     usb_state: UsbState,
     settings_state: SettingsState | None = None,
+    claude_state: ClaudeUsageState | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         server_version = "DesktopDisplayBridge/1.0"
@@ -919,11 +932,14 @@ def make_handler(
             elif path == "/v1/overview":
                 status = status_state.get()
                 self._send_json({
-                    "app": "MiniDisplay Bridge", "version": "1.12.0",
+                    "app": "MiniDisplay Bridge", "version": "1.13.0",
                     "desktop": status.as_public_dict(),
                     "usb": usb_state.get().as_public_dict(),
                     "usage": usage_state.get().as_public_dict(),
+                    "claude": (claude_state or ClaudeUsageState()).get(),
                 }, HTTPStatus.OK)
+            elif path == "/v1/claude-usage":
+                self._send_json((claude_state or ClaudeUsageState()).get(), HTTPStatus.OK)
             elif path == "/v1/codex-usage":
                 self._send_json(usage_state.get().as_public_dict(), HTTPStatus.OK)
             elif path in {"/v1/desktop-status", "/v1/mac-status"}:
@@ -936,6 +952,7 @@ def make_handler(
                     {
                         "ok": True,
                         "usage_ready": usage.valid,
+                        "claude_usage_ready": bool(claude_state and claude_state.get()["ok"]),
                         "usage_stale": usage.stale,
                         "desktop_status_ready": status.valid,
                         "mac_status_ready": status.valid,
@@ -1185,6 +1202,7 @@ def main(argv: list[str] | None = None, *, stop_event: threading.Event | None = 
         return 2
 
     usage_state = codex.UsageState()
+    claude_state = ClaudeUsageState()
     status_state = DesktopStatusState()
     temperature_state = TemperatureState()
     network_location_state = NetworkLocationState()
@@ -1203,10 +1221,12 @@ def main(argv: list[str] | None = None, *, stop_event: threading.Event | None = 
     stop_event = stop_event if stop_event is not None else threading.Event()
     server = codex.BridgeHTTPServer(
         (args.listen_host, args.listen_port),
-        make_handler(usage_state, status_state, usb_state, settings_state),
+        make_handler(usage_state, status_state, usb_state, settings_state, claude_state),
     )
 
     threads = [
+        threading.Thread(target=claude_state.run, args=(settings_state, stop_event),
+                         name="claude-usage-refresh", daemon=True),
         threading.Thread(
             target=codex.refresh_loop,
             args=(
@@ -1275,7 +1295,7 @@ def main(argv: list[str] | None = None, *, stop_event: threading.Event | None = 
             threading.Thread(
                 target=serial_writer_loop,
                 args=(status_state, usb_state, stop_event, args.serial_port, args.serial_baud,
-                      DEFAULT_RECONNECT_SECONDS, settings_state, weather_cache),
+                      DEFAULT_RECONNECT_SECONDS, settings_state, weather_cache, claude_state),
                 name="usb-display-writer",
                 daemon=True,
             )

@@ -33,6 +33,7 @@ class DisplaySettings:
     night_end_hour: int = 7
     serial_port: str | None = None
     weather_city_code: str = '0'
+    claude_enabled: bool = False
 
     def brightness(self, hour: int) -> tuple[int, int, bool]:
         start, end = self.night_start_hour, self.night_end_hour
@@ -45,7 +46,10 @@ def validate_settings(values: Mapping[str, Any], base: DisplaySettings) -> Displ
     if not isinstance(values, dict) or set(values) - set(asdict(base)):
         raise ValueError("设置包含未知字段")
     for name, value in values.items():
-        if name == 'weather_city_code':
+        if name == 'claude_enabled':
+            if type(value) is not bool:
+                raise ValueError('Claude 额度开关必须为布尔值')
+        elif name == 'weather_city_code':
             if not isinstance(value, str) or not re.fullmatch(r'(?:0|101\d{6})', value):
                 raise ValueError('天气城市代码必须为 9 位数字，或填 0 自动识别')
         elif name == "serial_port":

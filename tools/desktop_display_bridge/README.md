@@ -209,3 +209,34 @@ $MSD4,<序号>,<CPU×10>,<内存×10>,<CPU温度×10>,<GPU温度×10>,<Codex剩�
 网络位置的产品思路与失败保留旧值策略参考了 MIT 许可的 [Here for macOS](https://github.com/koalaauto/here-macos)。桥接程序只将 `国家-地区` 短标签发送给小屏，不发送公网 IP、经纬度、城市全名或 ISP。启用该功能时，`ipwho.is` 会像任何公网服务一样看到请求来源 IP；不希望发生此请求时可设置 `DESKTOP_BRIDGE_LOCATION_ENABLED=0`。
 
 第二块屏幕固件位于 [`mac_status_display`](../../mac_status_display/README.md)；目录名为兼容已有构建命令而保留。
+
+
+## Claude 账户余量（1.13.0）
+
+面板与 USB 小屏同时显示 Claude 的 5 小时和每周**剩余**比例，保留 Codex 周余量。
+在“显示屏设置”开启“连接 Claude 账户额度”，默认关闭。桌面/网页用户需在本机
+Claude Code 登录同一 Claude 账号；首次需要登录时使用官方 `claude auth login`。
+无需发消息或购买 API 额度。Bridge 不提供、记录或上传登录令牌。
+
+读取逻辑参考 [CodexBar 的 Claude provider](https://github.com/steipete/CodexBar/blob/25bba9b7fd9ce83c33053958f7366e23b2dc8a82/docs/claude.md)：
+
+- 使用当前 `CLAUDE_CONFIG_DIR/.credentials.json`，否则 `~/.claude/.credentials.json`，
+  要求 `user:profile` 权限；不跨配置目录挑选账号，不读取浏览器 Cookie。
+- 请求 `https://api.anthropic.com/api/oauth/usage`，保留所需 OAuth beta 请求头。
+  `five_hour` 与 `seven_day` 各自独立处理；缺失窗口显示 `--`，不会把花费或上下文余量当成订阅额度。
+- 每 120 秒查询，429 尊重秒数或 HTTP 日期形式的 `Retry-After`，120–3600 秒退避。
+  网络故障保留有时间标记的上次数据，重置时间到达后清空旧窗口；认证失败清空账户缓存。
+- Windows 登录过期时最多每 5 分钟启动一次官方 Claude `/status`，限时 12 秒。
+  通过 ConPTY 隐藏运行于专用目录，禁用工具、MCP、用户/项目设置、Hooks、Remote Control
+  和自动更新；不确认信任/登录提示，不发送对话，不保存终端输出。只有重新读到有效凭据
+  才继续查询，续期不成功时提示用户重新登录。Bridge 从不写 Claude 的凭据或自行兑换 refresh token。
+- 支持标准 Claude 安装和 Windows 商店版 Claude 内置程序路径。
+  macOS/Linux 当前支持凭据文件；不在后台读取或弹出 macOS Keychain 授权。
+
+这是按需移植的 OAuth 路径，不包含 CodexBar 的网页 Cookie、账单、模型专属额度与全部备用采集器。
+账户接口并非稳定公共 API，服务变动时本机面板会显示连接错误，系统指标与离线天气时钟不受影响。
+Codex 继续通过现有官方 `codex app-server` 读取限额，这是 CodexBar 也支持的 CLI RPC 路径。
+
+HTTP 增加 `/v1/claude-usage`，`/v1/overview` 增加 `claude`。USB 增加独立的
+`$MSA1,five_hour_remaining10,seven_day_remaining10,stale*CRC16`；缺失值 `-1`，有效值 0–1000。
+旧 MSD4 固件忽略这个辅助包，新固件 15 秒收不到辅助包就清空 Claude 区域；辅助流量不能阻止离线时钟启动。

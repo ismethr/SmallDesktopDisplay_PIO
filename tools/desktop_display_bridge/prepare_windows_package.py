@@ -11,7 +11,7 @@ from PIL import Image
 root, staging = map(Path, sys.argv[1:])
 with Image.open(root / 'tools/desktop_display_bridge/assets/MiniDisplayBridgeIcon.png') as icon:
     icon.save(staging / 'MiniDisplayBridge.ico', sizes=[(n, n) for n in (16, 24, 32, 48, 64, 128, 256)])
-for name in ('pystray', 'Pillow', 'psutil', 'pyserial', 'six', 'pyinstaller', 'certifi'):
+for name in ('pystray', 'Pillow', 'psutil', 'pyserial', 'six', 'pyinstaller', 'certifi', 'pywinpty'):
     try:
         package = distribution(name)
     except PackageNotFoundError:

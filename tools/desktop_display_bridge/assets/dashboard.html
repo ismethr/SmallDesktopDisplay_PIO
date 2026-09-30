@@ -13,13 +13,26 @@ header{display:flex;align-items:center;gap:18px;margin-bottom:30px}header img{wi
 @media(max-width:620px){main{padding:24px 16px}header{gap:12px}header img{width:58px;height:58px}h1{font-size:21px}header small{display:none}.grid{grid-template-columns:1fr}.connection{padding:18px;gap:12px;flex-wrap:wrap}.connection button{margin-left:23px}.card{padding:20px}.value{font-size:38px}footer{flex-direction:column;gap:4px}}
 .connection-actions{display:flex;gap:10px;margin-left:auto;align-items:center;flex-wrap:wrap}.connection-actions button{margin:0}.button-link{border:1px solid #405650;border-radius:8px;padding:8px 14px;white-space:nowrap;font-size:15px}.settings{margin-top:24px;scroll-margin-top:20px}.settings h2{font-size:20px;margin:0}.settings-heading{display:flex;align-items:center;gap:16px;margin-bottom:24px}.settings-heading p{font-size:13px}.settings-heading button{font-size:13px}.settings fieldset{padding:0;margin:0;border:0;min-width:0}.settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.setting{min-width:0}.setting label{display:block;font-size:14px;color:#dce8eb;margin-bottom:10px}.setting output{float:right;color:#80dfb8;font-variant-numeric:tabular-nums}.setting input[type=range]{width:100%;accent-color:#6bdcb6;margin:8px 0;cursor:pointer}.setting select{width:100%;padding:10px 12px;font:inherit;color:#e5eded;border:1px solid #3b4c53;border-radius:8px;background:#0c1316}.setting small{display:block;color:#8ea3ac;font-size:12px;line-height:1.65;margin-top:7px}.hours{display:flex;align-items:center;gap:10px}.hours select{min-width:0;flex:1}.wide{grid-column:1/-1}.settings-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px}.settings-actions button{margin:0}.settings-actions .primary{background:#6bdcb6;color:#10241d;font-weight:600;border-color:#6bdcb6}.settings-message{font-size:13px;margin-top:16px;min-height:22px}.settings-message.error{color:#f0b48f}:focus-visible{outline:2px solid #80dfb8;outline-offset:4px}.settings fieldset:disabled{opacity:.5}
 @media(max-width:620px){.connection-actions{margin-left:23px}.settings-grid{grid-template-columns:1fr}.settings-heading{align-items:flex-start;flex-wrap:wrap}.settings-heading button{margin-left:0}.network .value{font-size:clamp(20px,6vw,30px)}}
+
+main{max-width:1120px}header{margin-bottom:28px}header img{width:64px;height:64px}header p{font-size:13px}header small{border:1px solid #2b3b40;padding:5px 10px;border-radius:20px}
+.section-title{display:flex;align-items:baseline;justify-content:space-between;margin:26px 0 12px}.section-title h2{font-size:14px;font-weight:500;margin:0;color:#bdcdcf}.section-title span{font-size:12px;color:#778d94}
+.ai-card{padding:26px 28px;border-top:2px solid #71dcb6;background:linear-gradient(135deg,#14231f,#11191d 70%)}.ai-card .label{color:#adcebf;letter-spacing:.8px}.ai-card .value{font-size:54px}.ai-card.claude{border-top-color:#db977b;background:linear-gradient(135deg,#2a201c,#11191d 70%)}.claude .label{color:#e4b9a7}.claude .bar span{background:#db977b}.claude .badge:not(.cached){background:#402d23;color:#edbba7}.ai-caption{font-size:12px;color:#93a5ad;margin-bottom:8px}.quota-secondary{display:flex;justify-content:space-between;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid #3c302a;font-size:13px;color:#b8aaa3}.quota-secondary b{font-size:21px;color:#e9d6cc;font-weight:500;font-variant-numeric:tabular-nums}.quota-secondary small{color:#95877f;font-size:11px}.telemetry{grid-template-columns:1.25fr 1fr 1fr}.telemetry .card{padding:20px}.telemetry .value{font-size:28px}.telemetry .pair{gap:14px}.telemetry .details{gap:12px;font-size:12px}.telemetry .label{letter-spacing:.7px}.setting input[type=text],#weather_city_code{width:100%;padding:10px 12px;border:1px solid #3b4c53;border-radius:8px;background:#0c1316;color:#e5eded;font:inherit}.settings .setting{margin-bottom:12px}.setting .toggle{display:flex;gap:12px;align-items:center}.toggle input{width:18px;height:18px;accent-color:#db977b}.claude-note{font-size:12px;color:#a99c95;margin-top:14px}.badge{font-variant-numeric:tabular-nums}
+@media(max-width:860px){.telemetry{grid-template-columns:1fr}.telemetry .pair{justify-content:flex-start;gap:48px}.telemetry .value{font-size:30px}}
+@media(max-width:620px){.section-title span{display:none}.ai-card{padding:22px}.ai-card .value{font-size:46px}}
+@media(prefers-reduced-motion:reduce){.bar span{transition:none}}
 </style>
 <main>
   <header><img src="/icon.png" alt="MiniDisplay"><div><h1>MiniDisplay Bridge</h1><p>电脑与桌面小屏的连接中心</p></div><small id="version">本机状态</small></header>
-  <section class="connection warn" id="connection" aria-live="polite"><span class="dot"></span><div><h2 id="connection-title">正在读取连接状态…</h2><p id="connection-detail">系统指标每秒更新，Codex 与网络位置按各自周期刷新。</p></div><div class="connection-actions"><button id="refresh" type="button">刷新状态</button><a class="button-link" href="#settings">显示屏设置</a></div></section>
-  <div class="grid">
+  <section class="connection warn" id="connection" aria-live="polite"><span class="dot"></span><div><h2 id="connection-title">正在读取连接状态…</h2><p id="connection-detail">正在连接本机服务并读取小屏状态。</p></div><div class="connection-actions"><button id="refresh" type="button">刷新状态</button><a class="button-link" href="#settings">显示屏设置</a></div></section>
+  <div class="section-title"><h2>AI 账户余量</h2><span>独立刷新 · 小屏同步显示</span></div>
+  <div class="grid ai-grid">
+    <section class="card ai-card"><div class="label">CODEX <span style="opacity:.6">/</span> 本周余量 <span class="badge cached" id="usage-badge">等待数据</span></div><div class="value"><span id="usage">--</span><span class="unit">%</span></div><div class="bar" id="usage-bar"><span></span></div><div class="caption" id="usage-detail">读取当前登录账号的周限额</div></section>
+    <section class="card ai-card claude"><div class="label">CLAUDE <span style="opacity:.6">/</span> 5 小时余量 <span class="badge cached" id="claude-badge">未连接</span></div><div class="value"><span id="claude-five">--</span><span class="unit">%</span></div><div class="bar" id="claude-bar"><span></span></div><div class="caption" id="claude-five-reset">等待账户数据</div><div class="quota-secondary"><span>每周余量<br><small id="claude-week-reset">--</small></span><b><span id="claude-week">--</span>%</b></div><p class="claude-note" id="claude-detail">在下方设置中开启 Claude 额度连接。</p><a class="claude-note" href="https://claude.ai/settings/usage" target="_blank" rel="noopener noreferrer">在 Claude 核对额度 ↗</a></section>
+  </div>
+  <div class="section-title"><h2>电脑与小屏</h2><span>每秒更新</span></div>
+  <div class="grid telemetry">
     <section class="card"><div class="label">SYSTEM / 系统负载</div><div class="pair"><div><div class="value"><span id="cpu">--</span><span class="unit">%</span></div><div class="caption">CPU 使用率</div></div><div><div class="value"><span id="memory">--</span><span class="unit">%</span></div><div class="caption">内存使用率</div></div></div><div class="details"><span>CPU 温度 <b id="cpu-temp">--</b></span><span>GPU 温度 <b id="gpu-temp">--</b></span></div></section>
-    <section class="card"><div class="label">CODEX / 本周余量 <span class="badge cached" id="usage-badge">等待数据</span></div><div class="value"><span id="usage">--</span><span class="unit">%</span></div><div class="bar" id="usage-bar"><span></span></div><div class="caption" id="usage-detail">读取当前登录账号的周限额</div></section>
+
     <section class="card network"><div class="label">NETWORK / 实时速率</div><div class="pair"><div><div class="value" id="download">--</div><div class="caption">↓ 下载</div></div><div><div class="value" id="upload">--</div><div class="caption">↑ 上传</div></div></div><div class="details"><span>默认网卡 <b id="interface">--</b></span></div></section>
     <section class="card network"><div class="label">DISPLAY / 小屏状态</div><div class="value" id="location">--</div><div class="caption" id="location-detail">公网出口位置</div><div class="details"><span>亮度 <b id="brightness">--</b></span><span>模式 <b id="mode">--</b></span></div></section>
   </div>
@@ -36,6 +49,7 @@ header{display:flex;align-items:center;gap:18px;margin-bottom:30px}header img{wi
         <div class="setting wide"><label for="serial_port">USB 状态屏端口</label><select id="serial_port"><option value="">自动识别（仅连接一个 USB 串口时）</option></select><small>只选择系统状态屏，不要选择天气屏。更换端口后会自动重新连接；插入新设备后可点“重新加载”更新列表。</small></div>
       </div>
       <div class="setting"><label for="weather_city_code">断联天气城市代码</label><input id="weather_city_code" inputmode="numeric" maxlength="9" value="0"><small>填 0 按电脑网络位置识别，或填中国天气网的 9 位城市代码。电脑每 30 分钟同步一次；断联后保留最后的天气。</small></div>
+      <div class="setting wide"><label class="toggle" for="claude_enabled"><input id="claude_enabled" type="checkbox">连接 Claude 账户额度</label><small>读取本机 Claude Code 的已有登录，仅向 Anthropic 官方额度服务发送登录令牌。桌面/网页版用户需在 Claude Code 登录同一账号；程序不保存令牌、不调用对话模型。采用 CodexBar 同类 OAuth 读取方式，每两分钟同步；登录过期时先尝试由 Claude 官方程序恢复。</small><small><a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noopener noreferrer">Claude 登录准备 ↗</a></small></div>
       <div class="settings-actions"><button class="primary" id="settings-save" type="submit">保存并应用</button><button id="reconnect" type="button">重新连接 USB</button></div>
     </fieldset></form><p class="settings-message" id="settings-message" role="status">正在读取设置…</p>
   </section>
@@ -53,7 +67,16 @@ function rate(value){if(!number(value))return '--';let unit=0;const units=['B/s'
 function flag(location){const country=(location||'').split('-')[0];return /^[A-Z]{2}$/.test(country)?String.fromCodePoint(...[...country].map(c=>127397+c.charCodeAt(0)))+' ':'';}
 function moment(seconds){return number(seconds)?new Date(seconds*1000).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'--';}
 function render(data){
- const d=data.desktop,u=data.usage,usb=data.usb;
+ const d=data.desktop,u=data.usage,usb=data.usb,c=data.claude||{};
+ const five=c.five_hour,week=c.seven_day;
+ text('claude-five',percent(five?.remaining_percent));text('claude-week',percent(week?.remaining_percent));
+ text('claude-badge',c.ok?(c.stale?'上次数据':'已同步'):(c.error==='disabled'?'未开启':['connecting','renewing'].includes(c.error)?'连接中':'待连接'));
+ $('claude-badge').classList.toggle('cached',!c.ok||c.stale);$('claude-bar').classList.toggle('cached',!!c.stale);
+ $('claude-bar').firstElementChild.style.width=(five?percent(five.remaining_percent):'0')+'%';
+ text('claude-five-reset',five?(five.reset_at?'下次重置 '+moment(five.reset_at):'当前时段尚未开始'):'5 小时窗口暂无数据');
+ text('claude-week-reset',week?(week.reset_at?'重置于 '+moment(week.reset_at):'本周窗口尚未开始'):'每周窗口暂无数据');
+ const claudeErrors={disabled:'请在下方设置中开启 Claude 额度连接。',connecting:'正在读取账户额度…',renewing:'正在通过 Claude 官方程序恢复登录…',missing_scope:'当前登录缺少额度读取权限，请使用 Claude Code 的账号登录。',login_required:'未找到可用登录。请先在 Claude Code 登录与桌面/网页版相同的账号。',login_expired:'Claude 登录已过期，请在 Claude Code 重新登录；连接程序会自动重试。',access_denied:'当前登录无法访问订阅额度，请核对 Claude 账号和套餐。',rate_limited:'Claude 暂时限制查询频率，稍后自动重试。',network_error:'暂时无法连接 Claude，稍后自动重试。',service_unavailable:'Claude 额度服务暂不可用，稍后自动重试。',invalid_response:'暂时无法识别 Claude 的额度数据。',no_quota:'当前账号没有可显示的订阅额度。',awaiting_reset:'额度窗口已结束，正在等待新数据。'};
+ text('claude-detail',(claudeErrors[c.error]||(c.stale?'更新暂不可用，保留上次余量。':'账户额度已同步。'))+(c.fetched_at?' · 更新于 '+moment(c.fetched_at):''));
  $('temperature-help').hidden=d.host_platform!=='Windows'||!d.temperature_error;
  text('temperature-detail',d.temperature_error||'温度数据已同步。');
  const active=usb.connected&&d.ok&&number(usb.last_sent_at)&&Date.now()/1000-usb.last_sent_at<5;
@@ -73,14 +96,14 @@ function render(data){
  text('location',flag(d.network_location)+(d.network_location||'--'));text('location-detail',d.network_location_stale?'公网出口位置 · 上次数据':'公网出口位置');
  text('brightness',d.ok?d.display_brightness_percent+'%':'--');text('mode',d.ok?(d.night_mode?'夜间调暗':'日间'):'--');
  text('help-title',active?'连接正常':usb.phase==='disabled'?'仅采集模式':'恢复连接');
- text('help-text',active?'此页面自动刷新。Codex 或位置服务暂不可用时，其余系统指标会继续发送；USB 重新插入后会自动重连。':usb.phase==='disabled'?'以默认参数启动桥接程序，即可启用 USB 输出。当前页面展示电脑端采集的数据。':'检查 USB 数据线及设备供电，并关闭正在占用该串口的烧录工具或串口监视器。多个串口同时连接时，在启动参数中指定状态屏端口。');
+ text('help-text',active?'此页面自动刷新。AI 额度或位置服务暂不可用时，其余系统指标会继续发送；USB 重新插入后会自动重连。':usb.phase==='disabled'?'以默认参数启动桥接程序，即可启用 USB 输出。当前页面展示电脑端采集的数据。':'检查 USB 数据线及设备供电，并关闭正在占用该串口的烧录工具或串口监视器。多个串口同时连接时，在启动参数中指定状态屏端口。');
  text('updated','页面同步于 '+new Date().toLocaleTimeString('zh-CN'));
 }
 async function refresh(){
  if(busy)return;busy=true;$('refresh').disabled=true;
  const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),3500);
  try{const response=await fetch('/v1/overview',{cache:'no-store',signal:controller.signal});if(!response.ok)throw Error();const data=await response.json();render(data);lastSuccess=Date.now();}
- catch{$('connection').classList.add('warn');text('connection-title','暂时联系不上桥接程序');text('connection-detail','请打开 MiniDisplay Bridge；恢复后此页面会自动重新同步。');text('updated',lastSuccess?'连接中断 · 页面保留上次显示':'尚未连接到本机服务');}
+ catch{for(const id of ['usage','claude-five','claude-week'])text(id,'--');for(const id of ['usage-badge','claude-badge']){text(id,'连接中断');$(id).classList.add('cached');}for(const id of ['usage-bar','claude-bar'])$(id).firstElementChild.style.width='0%';$('connection').classList.add('warn');text('connection-title','暂时联系不上桥接程序');text('connection-detail','请打开 MiniDisplay Bridge；恢复后此页面会自动重新同步。');text('updated',lastSuccess?'连接中断 · 页面保留上次显示':'尚未连接到本机服务');}
  finally{clearTimeout(timeout);busy=false;$('refresh').disabled=false;}
 }
 $('refresh').addEventListener('click',refresh);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});setInterval(()=>{if(!document.hidden)refresh();},1000);refresh();
@@ -90,7 +113,7 @@ const hourFields=['night_start_hour','night_end_hour'];
 let settingsToken='',settingsRevision=0,settingsBusy=false;
 for(const id of hourFields){for(let hour=0;hour<24;hour++)$(id).add(new Option(String(hour).padStart(2,'0')+':00',String(hour)));}
 function settingsMessage(message,error=false){text('settings-message',message);$('settings-message').classList.toggle('error',error);}
-function settingsValues(){const values={};for(const id of [...brightnessFields,...hourFields])values[id]=Number($(id).value);values.serial_port=$('serial_port').value||null;values.weather_city_code=$('weather_city_code').value.trim();return values;}
+function settingsValues(){const values={};for(const id of [...brightnessFields,...hourFields])values[id]=Number($(id).value);values.serial_port=$('serial_port').value||null;values.weather_city_code=$('weather_city_code').value.trim();values.claude_enabled=$('claude_enabled').checked;return values;}
 function showSettings(data){
  settingsToken=data.token;settingsRevision=data.revision;
  for(const id of [...brightnessFields,...hourFields])$(id).value=data.settings[id];
@@ -99,6 +122,7 @@ function showSettings(data){
  for(const port of data.ports)$('serial_port').add(new Option(port,port));
  $('serial_port').value=data.settings.serial_port||'';
  $('weather_city_code').value=data.settings.weather_city_code||'0';
+ $('claude_enabled').checked=!!data.settings.claude_enabled;
 }
 async function settingsRequest(path,body){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),5000);
@@ -117,7 +141,7 @@ async function settingsAction(action){
  finally{settingsBusy=false;$('settings-fields').disabled=!settingsToken;$('settings-reload').disabled=false;}
 }
 async function loadSettings(){await settingsAction(async()=>{const data=await settingsRequest('/v1/settings');showSettings(data);settingsMessage(data.warning||'调整后点击“保存并应用”；自动刷新状态不会覆盖未保存的修改。',!!data.warning);});}
-for(const id of [...brightnessFields,...hourFields,'serial_port','weather_city_code'])$(id).addEventListener('input',()=>{
+for(const id of [...brightnessFields,...hourFields,'serial_port','weather_city_code','claude_enabled'])$(id).addEventListener('input',()=>{
  if(brightnessFields.includes(id))text(id+'-value',$(id).value+'%');
  settingsMessage('有未保存的修改。');
 });

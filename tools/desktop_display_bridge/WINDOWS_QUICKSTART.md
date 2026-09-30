@@ -1,4 +1,4 @@
-# MiniDisplay Bridge 1.12 · Windows 使用说明
+# MiniDisplay Bridge 1.13 · Windows 使用说明
 
 双击安装包，按向导完成安装。无需 Python；支持 Windows 10/11 x64。
 安装时可选桌面快捷方式、登录 Windows 后自动运行。默认按当前用户安装，无需管理员。
@@ -39,3 +39,13 @@
 传感器组件源码：https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/tree/v0.9.6
 本程序遵循仓库的 AGPL-3.0 许可。随安装包一并分发对应源码；第三方许可见安装目录的 `licenses`。
 本社区构建未做商业代码签名。
+
+
+## Claude 余量
+
+打开本机面板 → 显示屏设置 → 开启“连接 Claude 账户额度”并保存。
+这会读取本机 Claude Code 的现有登录，采用 CodexBar 同类 OAuth 方式查询账户的
+5 小时、每周剩余额度。桌面/网页版用户应登录同一个 Claude 账号。
+登录过期时程序会先尝试用官方 Claude 恢复；若面板仍提示过期，请运行 `claude auth login`
+完成官方登录，最多两分钟自动恢复。不要把授权码或令牌发到聊天或 GitHub。
+未连接、窗口缺失显示 `--`；上次数据有明确标记，过重置时间后不继续显示旧余量。
