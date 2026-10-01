@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import calendar
 import glob
 import json
 import math
@@ -51,6 +50,21 @@ import codex_usage_bridge as codex  # noqa: E402
 from bridge_settings import DisplaySettings, RevisionConflict, SettingsState, default_settings_path
 from weather_cache import WeatherCache
 from claude_usage import ClaudeUsageState
+from display_protocol import (  # noqa: F401 - re-exported for existing importers
+    MISSING_CODEX_USAGE,
+    MISSING_NETWORK_LOCATION,
+    MISSING_TEMPERATURE,
+    STATUS_FRAME_PREFIX as FRAME_PREFIX,
+    crc16_ccitt,
+    encode_calendar_frame,
+    encode_claude_frame,
+    encode_clock_frame,
+    encode_status_frame,
+    encode_weather_frame,
+)
+
+
+BRIDGE_VERSION = "1.13.0"
 
 
 DEFAULT_SERIAL_BAUD = 115200
@@ -68,10 +82,6 @@ DEFAULT_NIGHT_END_HOUR = 7
 DEFAULT_DAY_BRIGHTNESS = 50
 DEFAULT_NIGHT_BRIGHTNESS = 10
 DEFAULT_OFFLINE_BRIGHTNESS = 5
-FRAME_PREFIX = "MSD4"
-MISSING_CODEX_USAGE = -1
-MISSING_TEMPERATURE = -1
-MISSING_NETWORK_LOCATION = "--"
 MACOS_SMC_HELPER_NAME = "SmallDesktopDisplaySMC"
 MACOS_STATS_SMC = Path("/Applications/Stats.app/Contents/Resources/smc")
 MACOS_ROUTE_COMMAND = ("/sbin/route", "-n", "get", "default")
@@ -232,76 +242,9 @@ class NetworkLocationState:
             self._snapshot = snapshot
 
 
-def crc16_ccitt(data: bytes) -> int:
-    """CRC-16/CCITT-FALSE used by the desktop bridge and ESP8266."""
-    crc = 0xFFFF
-    for byte in data:
-        crc ^= byte << 8
-        for _ in range(8):
-            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
-    return crc
-
-
-def _bounded_tenths(value: float, low: int, high: int) -> int:
-    if not math.isfinite(value):
-        return low
-    return max(low, min(high, int(round(value * 10.0))))
-
-
-def encode_status_frame(snapshot: DesktopStatusSnapshot) -> bytes:
-    if not snapshot.valid:
-        raise ValueError("cannot encode an invalid desktop status snapshot")
-    codex_remaining = (
-        MISSING_CODEX_USAGE
-        if snapshot.codex_remaining_percent is None
-        else _bounded_tenths(float(snapshot.codex_remaining_percent), 0, 1000)
-    )
-    cpu_temperature = (
-        MISSING_TEMPERATURE
-        if snapshot.cpu_temperature_celsius is None
-        else _bounded_tenths(snapshot.cpu_temperature_celsius, 0, 1500)
-    )
-    gpu_temperature = (
-        MISSING_TEMPERATURE
-        if snapshot.gpu_temperature_celsius is None
-        else _bounded_tenths(snapshot.gpu_temperature_celsius, 0, 1500)
-    )
-    network_location = (snapshot.network_location or MISSING_NETWORK_LOCATION).upper()
-    if re.fullmatch(r"[A-Z0-9?\-]{2,8}", network_location) is None:
-        network_location = MISSING_NETWORK_LOCATION
-    payload = ",".join(
-        (
-            FRAME_PREFIX,
-            str(snapshot.sequence & 0xFFFF),
-            str(_bounded_tenths(snapshot.cpu_percent, 0, 1000)),
-            str(_bounded_tenths(snapshot.memory_percent, 0, 1000)),
-            str(cpu_temperature),
-            str(gpu_temperature),
-            str(codex_remaining),
-            "1" if snapshot.codex_usage_stale else "0",
-            str(max(0, min(0xFFFFFFFF, int(snapshot.download_bps)))),
-            str(max(0, min(0xFFFFFFFF, int(snapshot.upload_bps)))),
-            network_location,
-            "1" if snapshot.network_location_stale else "0",
-            str(max(0, min(100, int(snapshot.display_brightness_percent)))),
-            str(max(0, min(100, int(snapshot.offline_brightness_percent)))),
-        )
-    )
-    checksum = crc16_ccitt(payload.encode("ascii"))
-    return f"${payload}*{checksum:04X}\n".encode("ascii")
-
-
 def parse_default_route_interface(output: str) -> str | None:
     match = re.search(r"^\s*interface:\s*(\S+)\s*$", output, flags=re.MULTILINE)
     return match.group(1) if match else None
-
-
-def encode_clock_frame(now: float | None = None) -> bytes:
-    """Independent clock packet: old MSD3/MSD4 firmware safely ignores it."""
-    local = time.localtime(time.time() if now is None else now)
-    seconds = local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec
-    payload = f"MSC1,{seconds}".encode("ascii")
-    return b"$" + payload + f"*{crc16_ccitt(payload):04X}\n".encode("ascii")
 
 
 def parse_windows_default_route_interface(output: str) -> str | None:
@@ -473,7 +416,7 @@ def fetch_network_location(
         method="GET",
         headers={
             "Accept": "application/json",
-            "User-Agent": "SmallDesktopDisplayBridge/1.9",
+            "User-Agent": f"SmallDesktopDisplayBridge/{BRIDGE_VERSION}",
             "Cache-Control": "no-cache",
         },
     )
@@ -777,14 +720,6 @@ def discover_serial_port(
     return None, "multiple USB serial devices; configure DESKTOP_BRIDGE_SERIAL_PORT"
 
 
-def encode_claude_frame(usage: dict[str, Any]) -> bytes:
-    def remaining(key: str) -> int:
-        window = usage.get(key)
-        return round(window["remaining_percent"] * 10) if window else -1
-    payload = f'MSA1,{remaining("five_hour")},{remaining("seven_day")},{int(usage["stale"])}'.encode('ascii')
-    return b'$' + payload + f'*{crc16_ccitt(payload):04X}\n'.encode('ascii')
-
-
 def serial_writer_loop(
     status_state: DesktopStatusState,
     usb_state: UsbState,
@@ -866,12 +801,11 @@ def serial_writer_loop(
             frame = encode_status_frame(snapshot) + encode_clock_frame()
             if claude_state is not None:
                 frame += encode_claude_frame(claude_state.get())
-            clock_payload = f'MSC2,{calendar.timegm(time.localtime())}'.encode('ascii')
-            frame += b'$' + clock_payload + f'*{crc16_ccitt(clock_payload):04X}\n'.encode('ascii')
+            frame += encode_calendar_frame()
             if weather_cache is not None and (last_sequence is None or time.monotonic() - last_weather_at >= 30):
                 weather_payload = weather_cache.payload()
                 if weather_payload:
-                    frame += b'$' + weather_payload + f'*{crc16_ccitt(weather_payload):04X}\n'.encode('ascii')
+                    frame += encode_weather_frame(weather_payload)
                 last_weather_at = time.monotonic()
             if active.write(frame) != len(frame):
                 raise serial.SerialException("incomplete USB frame")
@@ -932,7 +866,7 @@ def make_handler(
             elif path == "/v1/overview":
                 status = status_state.get()
                 self._send_json({
-                    "app": "MiniDisplay Bridge", "version": "1.13.0",
+                    "app": "MiniDisplay Bridge", "version": BRIDGE_VERSION,
                     "desktop": status.as_public_dict(),
                     "usb": usb_state.get().as_public_dict(),
                     "usage": usage_state.get().as_public_dict(),

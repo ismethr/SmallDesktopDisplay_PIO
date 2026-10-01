@@ -1,6 +1,7 @@
-#pragma once
+#ifndef MINIDISPLAY_AI_USAGE_PROTOCOL_H
+#define MINIDISPLAY_AI_USAGE_PROTOCOL_H
 
-#include "offline_clock.h"
+#include "status_protocol.h"
 
 namespace macstatus {
 
@@ -10,10 +11,20 @@ struct ClaudeUsageFrame {
   bool stale = true;
 };
 
+inline bool operator==(const ClaudeUsageFrame &left, const ClaudeUsageFrame &right) {
+  return left.fiveHourTenths == right.fiveHourTenths && left.weekTenths == right.weekTenths &&
+         left.stale == right.stale;
+}
+
+inline bool operator!=(const ClaudeUsageFrame &left, const ClaudeUsageFrame &right) {
+  return !(left == right);
+}
+
+// $MSA1,five_hour_remaining10,week_remaining10,stale*CRC16
 // Auxiliary frame: older MSD4 receivers ignore it; it never keeps CPU data live.
 inline bool parseClaudeUsageFrame(const char *line, ClaudeUsageFrame &output) {
   if (!validAuxFrame(line, "$MSA1,")) return false;
-  const char *star = strrchr(line, '*');
+  const char *star = verifiedFrameEnd(line);
   const char *cursor = line + 6;
   int32_t values[3] = {};
   for (size_t index = 0; index < 3; ++index) {
@@ -36,3 +47,5 @@ inline bool parseClaudeUsageFrame(const char *line, ClaudeUsageFrame &output) {
 }
 
 }  // namespace macstatus
+
+#endif

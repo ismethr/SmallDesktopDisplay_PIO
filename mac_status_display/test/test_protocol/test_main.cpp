@@ -6,6 +6,8 @@
 #include "status_protocol.h"
 #include "offline_clock.h"
 #include "ai_usage_protocol.h"
+#include "line_reader.h"
+#include "status_format.h"
 
 void setUp() {}
 void tearDown() {}
@@ -179,10 +181,88 @@ void test_out_of_range_and_extra_fields_are_rejected() {
   TEST_ASSERT_FALSE(macstatus::parseStatusFrame(oldVersionLine, frame));
 }
 
+void test_frame_envelope_is_shared_by_every_frame_type() {
+  char line[40];
+  buildFrame("MSQ1", line, sizeof(line));
+  TEST_ASSERT_EQUAL_PTR(line + 5, macstatus::verifiedFrameEnd(line));
+  TEST_ASSERT_TRUE(macstatus::validAuxFrame(line, "$MSQ1*"));
+  TEST_ASSERT_FALSE(macstatus::validAuxFrame(line, "$MSQ2*"));
+  line[1] = 'N';  // Payload changed after the checksum was computed.
+  TEST_ASSERT_NULL(macstatus::verifiedFrameEnd(line));
+  const char *malformed[] = {"", "MSQ1*0000", "$MSQ1", "$MSQ1*123", "$MSQ1*12345", "$MSQ1*12G4"};
+  for (const char *candidate : malformed) TEST_ASSERT_NULL(macstatus::verifiedFrameEnd(candidate));
+  TEST_ASSERT_NULL(macstatus::verifiedFrameEnd(nullptr));
+}
+
+void test_civil_date_from_local_epoch_days() {
+  macstatus::CivilDate date = macstatus::civilFromDays(0);
+  TEST_ASSERT_EQUAL_UINT16(1970, date.year);
+  TEST_ASSERT_EQUAL_UINT8(1, date.month);
+  TEST_ASSERT_EQUAL_UINT8(1, date.day);
+  TEST_ASSERT_EQUAL_UINT8(4, date.weekday);  // Thursday
+  date = macstatus::civilFromDays(1790800747UL / 86400UL);
+  TEST_ASSERT_EQUAL_UINT16(2026, date.year);
+  TEST_ASSERT_EQUAL_UINT8(9, date.month);
+  TEST_ASSERT_EQUAL_UINT8(30, date.day);
+  TEST_ASSERT_EQUAL_UINT8(3, date.weekday);  // Wednesday
+  date = macstatus::civilFromDays(1709164800UL / 86400UL);
+  TEST_ASSERT_EQUAL_UINT8(2, date.month);
+  TEST_ASSERT_EQUAL_UINT8(29, date.day);  // 2024 leap day
+  date = macstatus::civilFromDays(4102444799UL / 86400UL);
+  TEST_ASSERT_EQUAL_UINT16(2099, date.year);
+  TEST_ASSERT_EQUAL_UINT8(12, date.month);
+  TEST_ASSERT_EQUAL_UINT8(31, date.day);
+}
+
+void test_line_reader_discards_overlong_and_empty_lines() {
+  minidisplay::LineReader<8> reader;
+  const char *input = "\n$ABC\r\n0123456789\n$OK\n";
+  const char *lines[4] = {};
+  size_t count = 0;
+  for (const char *cursor = input; *cursor != '\0'; ++cursor) {
+    const char *line = reader.push(*cursor);
+    if (line != nullptr) {
+      TEST_ASSERT_TRUE(count < 2);
+      lines[count++] = line;
+      if (count == 1) TEST_ASSERT_EQUAL_STRING("$ABC", line);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(2, count);
+  TEST_ASSERT_EQUAL_STRING("$OK", lines[1]);
+}
+
+void test_status_formatting() {
+  char text[16];
+  minidisplay::formatPercent(-1, text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("--", text);
+  minidisplay::formatPercent(725, text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("73%", text);
+  minidisplay::formatRate(1023, text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("1023B/s", text);
+  minidisplay::formatRate(347000, text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("338.9K/s", text);
+  minidisplay::formatRate(UINT32_MAX, text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("4.0G/s", text);
+  char country[3];
+  char detail[4];
+  minidisplay::splitNetworkLocation("US-WWWW", country, detail);
+  TEST_ASSERT_EQUAL_STRING("US", country);
+  TEST_ASSERT_EQUAL_STRING("WWW", detail);
+  minidisplay::splitNetworkLocation("SG", country, detail);
+  TEST_ASSERT_EQUAL_STRING("SG", detail);
+  minidisplay::splitNetworkLocation("--", country, detail);
+  TEST_ASSERT_EQUAL_STRING("--", country);
+  TEST_ASSERT_EQUAL_STRING("--", detail);
+}
+
 }  // namespace
 
 int main(int, char **) {
   UNITY_BEGIN();
+  RUN_TEST(test_frame_envelope_is_shared_by_every_frame_type);
+  RUN_TEST(test_civil_date_from_local_epoch_days);
+  RUN_TEST(test_line_reader_discards_overlong_and_empty_lines);
+  RUN_TEST(test_status_formatting);
   RUN_TEST(test_crc_standard_vector);
   RUN_TEST(test_claude_aux_frame_validation);
   RUN_TEST(test_clock_crc_bounds_and_no_output_mutation);

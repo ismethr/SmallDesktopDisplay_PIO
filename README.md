@@ -25,7 +25,7 @@ Windows 1.12 新增安装包、系统托盘与可选登录自启，并附带 Win
 | 网络状态 | 公网出口国旗和地区缩写、默认网卡实时下载与上传速度 |
 | 连接状态 | USB 在线/断线提示、自动重连，以及日间、夜间和断线亮度 |
 
-界面使用纯黑底：CPU 与内存并排放大，温度单独成行，Codex 余量和底部网络信息各有独立区域。只有变化的内容才会重绘，减少闪烁；尚未获取的数据显示占位符，不会误显示为 0 或 100%。
+界面使用纯黑底：标题栏在电脑校时后显示本地时间与日期；CPU 与内存并排放大，温度单独成行；Codex 与 Claude 余量卡片带进度条，余量低于 30% 变黄、低于 10% 变红；底部为网络信息。只有变化的内容才会重绘，减少闪烁；尚未获取的数据显示占位符，不会误显示为 0 或 100%。
 
 需要了解连接情况时，点击 macOS 菜单栏的小屏图标，或在电脑浏览器打开 [本机状态页面](http://127.0.0.1:8766/)，即可查看 USB 连接、系统指标、Codex 数据更新时间和出口位置。面板支持调整日间、夜间和断线亮度、夜间时段、USB 端口，以及手动重新连接；设置保存在本机，重启后自动恢复，无需重新刷固件。
 
@@ -222,7 +222,7 @@ MACOS_BRIDGE_ARCH=x86_64 ./tools/build_macos_bridge_app.sh
 ```powershell
 python -B -m unittest discover -s tools/font_translate/tests -v
 python -B tools/codex_usage_bridge/test_codex_usage_bridge.py -v
-python -B tools/desktop_display_bridge/test_desktop_display_bridge.py -v
+python -B -m unittest discover -s tools/desktop_display_bridge -p "test_*.py" -v
 python -B -m unittest discover -s test/host -v
 ```
 
@@ -231,6 +231,12 @@ python -B -m unittest discover -s test/host -v
 ```powershell
 pio test -e native_test
 pio test -d mac_status_display -e native_test
+```
+
+Windows 上没有 GCC 时，可用 Visual Studio Build Tools 运行 USB 状态屏的协议测试和真实代码布局预览（输出 PNG 与总览图）：
+
+```powershell
+.\tools\test_status_display.ps1
 ```
 
 Windows 模拟器还提供 MSVC `/W4 /WX` 构建、真实 JPEG 解码、固定场景 RGB565 哈希和便携包自检：
@@ -277,8 +283,9 @@ test/test_display_logic/     Unity 边界测试
 test/host/                    固件证书与静态资源完整性测试
 tools/font_translate/        字体转换工具及 Python 单元测试
 tools/codex_usage_bridge/    系统状态屏使用的本机 Codex 周用量读取模块
-tools/desktop_display_bridge/macOS/Windows 系统采集与 USB 状态传输
+tools/desktop_display_bridge/macOS/Windows 系统采集、USB 帧编码与本机面板
 mac_status_display/          自研 USB 系统状态屏固件（保留早期兼容目录名）
+tools/status_preview/        状态屏真实代码的主机光栅预览与布局检查
 tools/*_simulator.ps1        Windows 模拟器构建、测试与便携打包脚本
 ```
 

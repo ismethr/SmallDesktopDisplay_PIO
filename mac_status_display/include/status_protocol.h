@@ -71,25 +71,42 @@ inline bool parseSigned(const char *text, int32_t minimum, int32_t maximum, int3
   return true;
 }
 
+// Every frame on the wire is "$<payload>*HHHH": a CRC-16/CCITT-FALSE over the
+// payload, in four hex digits. Returns the '*' that ends a verified payload,
+// or nullptr when the envelope or checksum is invalid.
+inline const char *verifiedFrameEnd(const char *line) {
+  if (line == nullptr || line[0] != '$') return nullptr;
+  const char *star = strrchr(line, '*');
+  if (star == nullptr || strlen(star + 1) != 4 || star - line > 1000) return nullptr;
+  uint16_t received = 0;
+  for (uint8_t index = 1; index <= 4; ++index) {
+    const int nibble = hexNibble(star[index]);
+    if (nibble < 0) return nullptr;
+    received = static_cast<uint16_t>((received << 4) | nibble);
+  }
+  const size_t payloadLength = static_cast<size_t>(star - (line + 1));
+  if (crc16Ccitt(reinterpret_cast<const uint8_t *>(line + 1), payloadLength) != received) {
+    return nullptr;
+  }
+  return star;
+}
+
+// Auxiliary frames (clock, calendar, weather, AI usage) share the envelope and
+// are identified by their "$NAME," prefix. Older receivers simply ignore them.
+inline bool validAuxFrame(const char *line, const char *prefix) {
+  return line != nullptr && strncmp(line, prefix, strlen(prefix)) == 0 &&
+         verifiedFrameEnd(line) != nullptr;
+}
+
 // Parses a mutable line in the form:
 // Current protocol:
 // $MSD4,seq,cpu10,mem10,cpu_temp10,gpu_temp10,codex_remaining10,codex_stale,down_bps,up_bps,network_location,location_stale,brightness,offline_brightness*CRC16
 // MSD3 is also accepted during coordinated bridge/firmware upgrades and maps
 // both temperatures to kMissingTemperature.
 inline bool parseStatusFrame(char *line, StatusFrame &output) {
-  if (line == nullptr || line[0] != '$') return false;
-  char *star = strrchr(line, '*');
-  if (star == nullptr || strlen(star + 1) != 4) return false;
-
-  uint16_t receivedCrc = 0;
-  for (uint8_t index = 0; index < 4; ++index) {
-    const int nibble = hexNibble(star[index + 1]);
-    if (nibble < 0) return false;
-    receivedCrc = static_cast<uint16_t>((receivedCrc << 4) | nibble);
-  }
-  const uint8_t *payload = reinterpret_cast<const uint8_t *>(line + 1);
-  const size_t payloadLength = static_cast<size_t>(star - (line + 1));
-  if (crc16Ccitt(payload, payloadLength) != receivedCrc) return false;
+  const char *verifiedEnd = verifiedFrameEnd(line);
+  if (verifiedEnd == nullptr) return false;
+  char *star = line + (verifiedEnd - line);
 
   *star = '\0';
   char *save = nullptr;

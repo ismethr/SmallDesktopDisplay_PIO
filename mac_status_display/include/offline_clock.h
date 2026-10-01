@@ -5,23 +5,10 @@
 
 namespace macstatus {
 
-inline bool validAuxFrame(const char *line, const char *prefix) {
-  if (!line || strncmp(line, prefix, strlen(prefix)) != 0) return false;
-  const char *star = strrchr(line, '*');
-  if (!star || strlen(star + 1) != 4 || star - line > 1000) return false;
-  uint16_t crc = 0;
-  for (int i = 1; i <= 4; ++i) {
-    int digit = hexNibble(star[i]);
-    if (digit < 0) return false;
-    crc = static_cast<uint16_t>((crc << 4) | digit);
-  }
-  return crc == crc16Ccitt(reinterpret_cast<const uint8_t *>(line + 1), star - line - 1);
-}
-
+// $MSC2,<local wall-clock time encoded as a 10-digit UTC epoch>*CRC16
 inline bool parseCalendarFrame(const char *line, uint32_t &epoch) {
   if (!validAuxFrame(line, "$MSC2,")) return false;
-  const char *star = strchr(line, '*');
-  if (star - line != 16) return false;
+  if (verifiedFrameEnd(line) - line != 16) return false;
   char value[11] = {};
   for (int i = 0; i < 10; ++i) {
     if (line[6 + i] < '0' || line[6 + i] > '9') return false;
@@ -33,21 +20,13 @@ inline bool parseCalendarFrame(const char *line, uint32_t &epoch) {
   return true;
 }
 
-// Local wall-clock seconds supplied by the host, independent of status frames.
+// $MSC1,<local seconds since midnight>*CRC16, independent of status frames.
 inline bool parseClockFrame(const char *line, uint32_t &seconds) {
-  if (line == nullptr || strncmp(line, "$MSC1,", 6) != 0) return false;
-  const char *star = strchr(line, '*');
-  if (star == nullptr || strlen(star + 1) != 4 || star - line > 11) return false;
-  uint16_t crc = 0;
-  for (size_t i = 1; i <= 4; ++i) {
-    const int nibble = hexNibble(star[i]);
-    if (nibble < 0) return false;
-    crc = static_cast<uint16_t>((crc << 4) | nibble);
-  }
-  if (crc != crc16Ccitt(reinterpret_cast<const uint8_t *>(line + 1), star - line - 1)) return false;
-  char value[6] = {};
+  if (!validAuxFrame(line, "$MSC1,")) return false;
+  const char *star = verifiedFrameEnd(line);
   const size_t length = static_cast<size_t>(star - (line + 6));
   if (length == 0 || length > 5) return false;
+  char value[6] = {};
   for (size_t i = 0; i < length; ++i) {
     if (line[6 + i] < '0' || line[6 + i] > '9') return false;
     value[i] = line[6 + i];
@@ -55,11 +34,37 @@ inline bool parseClockFrame(const char *line, uint32_t &seconds) {
   return parseUnsigned(value, 86399, seconds);
 }
 
+struct CivilDate {
+  uint16_t year;
+  uint8_t month;    // 1-12
+  uint8_t day;      // 1-31
+  uint8_t weekday;  // 0 = Sunday
+};
+
+// Proleptic Gregorian date for a day count since 1970-01-01 (H. Hinnant's
+// days_from_civil inverse), without pulling TimeLib into the status page.
+inline CivilDate civilFromDays(uint32_t days) {
+  const uint32_t shifted = days + 719468UL;
+  const uint32_t era = shifted / 146097UL;
+  const uint32_t dayOfEra = shifted - era * 146097UL;
+  const uint32_t yearOfEra =
+      (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096) / 365;
+  const uint32_t dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100);
+  const uint32_t monthIndex = (5 * dayOfYear + 2) / 153;
+  CivilDate date;
+  date.day = static_cast<uint8_t>(dayOfYear - (153 * monthIndex + 2) / 5 + 1);
+  date.month = static_cast<uint8_t>(monthIndex < 10 ? monthIndex + 3 : monthIndex - 9);
+  date.year = static_cast<uint16_t>(yearOfEra + era * 400 + (date.month <= 2 ? 1 : 0));
+  date.weekday = static_cast<uint8_t>((days + 4) % 7);  // 1970-01-01 was a Thursday.
+  return date;
+}
+
 class OfflineClock {
  public:
   bool valid() const { return valid_; }
   uint32_t seconds() const { return seconds_; }
   bool dateValid() const { return days_ != 0; }
+  uint32_t days() const { return days_; }
   uint32_t epoch() const { return days_ * 86400UL + seconds_; }
   void syncEpoch(uint32_t epoch, uint32_t now) {
     sync(epoch % 86400, now);

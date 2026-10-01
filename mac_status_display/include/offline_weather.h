@@ -1,8 +1,12 @@
 #pragma once
 
+// Include from offline_screen.cpp only: the fonts below are large PROGMEM
+// arrays with internal linkage and would be duplicated by a second includer.
 #include <ArduinoJson.h>
+#include <TFT_eSPI.h>
 #include <TimeLib.h>
 #include <TJpg_Decoder.h>
+#include "offline_clock.h"
 #include "../../src/font/ZdyLwFont_20.h"
 #include "../../src/font/font_td_20.h"
 #include "../../src/img/temperature.h"

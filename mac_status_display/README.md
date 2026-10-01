@@ -8,9 +8,11 @@
 - 当前公网出口国家/地区：以小国旗和地区缩写显示，可用于辨认 VPN/代理节点
 - ChatGPT/Codex 周剩余用量，以及 Claude 5 小时、每周剩余额度
 - 当前默认上网接口的下载、上传速度
-- USB 在线/断线状态
+- USB 在线/断线状态；电脑校时后标题栏显示本地时间与日期（`20:39 09-30 WED`），校时前显示 `MINIDISPLAY`
 - 纯黑卡片与中性灰圆角边界
 - CPU 与内存并排大字显示，温度独立成行；Codex 与 Claude 并排显示，底部三栏显示位置、下载和上传
+- 大号数值使用 TFT_eSPI 的 26 px Font 4，替代放大两倍的 Font 2，笔画更平滑且更省行高
+- 额度卡片带进度条：余量低于 30% 变黄、低于 10% 变红，缓存数据整体灰显；Claude 每周余量数字同样按余量着色
 - 只重绘变化的指标，减少刷新闪烁；等待时显示 `--`，额度用 `--` / `LEFT` / `CACHED`（Claude 为 `OLD`）区分缺失、有效与缓存数据
 - 自动节能亮度：默认 00:00–07:00 为 10%，白天 50%，数据断开后 5%
 - 连续 4 秒无系统数据自动切到原项目完整天气时钟页（原字库、天气图标、中文日期、温湿度和初音动画），重连后恢复状态页面
@@ -41,7 +43,28 @@ macOS / Linux 上可在首次固件构建后检查真实绘图代码的布局：
 sh tools/preview_status_screen.sh
 ```
 
-检查程序复用固件的绘图函数和 TFT_eSPI 实际字库，验证文字重叠、画布越界、数值极限、重复帧不重绘、断线及恢复状态，在 `build/status_preview/` 输出 PPM 预览。它不模拟 SPI、屏幕面板色序或背光，不能代替实机颜色验收；国旗仍沿用已在实机确认的颜色校正。
+Windows 安装 Visual Studio Build Tools（C++ 工作负载）后，一条命令即可用 MSVC 运行协议单元测试和布局预览，并把预览转换为 PNG 与总览图 `build/status_preview/contact-sheet.png`：
+
+```powershell
+.\tools\test_status_display.ps1
+```
+
+预览程序链接固件的真实 `MiniDisplayApp`、页面和国旗源码，以及 TFT_eSPI 实际字库（Font 1、Font 2 与 RLE 编码的 Font 4），全部状态都通过带 CRC 的 USB 帧驱动。它验证文字重叠、画布越界、数值极限、重复帧与同一分钟内不重绘、跨分钟刷新标题时间、低余量配色、断线/午夜/重连、辅助帧不充当心跳、Claude 15 秒过期以及 `millis()` 回绕。它不模拟 SPI、屏幕面板色序或背光，不能代替实机颜色验收；国旗仍沿用已在实机确认的颜色校正。
+
+## 代码结构
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/main.cpp` | 只负责串口读行并把完整行交给应用对象 |
+| `include/minidisplay_app.h`、`src/minidisplay_app.cpp` | 状态机：帧分发、状态页/离线页切换、背光、Claude 过期与计时 |
+| `include/status_screen.h`、`src/status_screen.cpp` | 在线状态页布局与按字段增量重绘 |
+| `include/country_flags.h`、`src/country_flags.cpp` | 出口国旗（颜色已按实机面板校正） |
+| `include/offline_screen.h`、`src/offline_screen.cpp` | 断联时钟页；实机上叠加 `offline_weather.h` 的天气、日期和动画 |
+| `include/display_theme.h` | 共享配色、字体编号与负载/温度/余量阈值 |
+| `include/status_protocol.h`、`offline_clock.h`、`ai_usage_protocol.h` | 统一的 `$…*CRC16` 帧校验与各帧解析、本地日历换算 |
+| `include/line_reader.h`、`status_format.h` | 可单测的按行缓冲与数值格式化 |
+
+电脑端对应的帧编码集中在 `tools/desktop_display_bridge/display_protocol.py`。
 
 屏幕不保存账号、Wi-Fi 密码、Codex 数据或公网 IP，只接收统一桥接提供的系统指标、`国家-地区` 短标签、剩余百分比和陈旧标志。`MSD4` 串口帧经过 CRC16、长度、版本、字段数和范围检查；固件也兼容缺少温度与位置字段的 `MSD3` 帧。
 

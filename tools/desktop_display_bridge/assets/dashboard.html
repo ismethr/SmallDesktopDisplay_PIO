@@ -5,152 +5,500 @@
 <title>MiniDisplay Bridge · 连接状态</title>
 <link rel="icon" href="/icon.png">
 <style>
-:root{color-scheme:dark;font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#e5eded;background:#0b1012}
-*{box-sizing:border-box}body{margin:0}main{max-width:1000px;margin:0 auto;padding:44px 28px 32px}
-header{display:flex;align-items:center;gap:18px;margin-bottom:30px}header img{width:76px;height:76px}h1{font-size:26px;letter-spacing:-.7px;margin:0}p{margin:0;color:#97a8ae}header small{margin-left:auto;color:#81949b}
-.connection{display:flex;gap:22px;align-items:center;border:1px solid #29463e;background:#12211d;border-radius:18px;padding:24px;margin-bottom:22px}.dot{flex:none;width:11px;height:11px;background:#69ddae;border-radius:50%;box-shadow:0 0 18px #69ddae44}.connection h2{font-size:18px;margin:0 0 4px}.connection p{font-size:13px}.connection.warn{background:#242016;border-color:#635135}.warn .dot{background:#edbf72;box-shadow:none}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{background:#11191d;border:1px solid #263339;border-radius:18px;padding:24px;min-width:0}.label{font-size:12px;letter-spacing:1.4px;color:#91a7af;margin-bottom:12px}.value{font-size:44px;line-height:1.15;font-weight:600;letter-spacing:-1.5px;font-variant-numeric:tabular-nums}.unit{font-size:18px;font-weight:400;letter-spacing:0;color:#8c9fa7;margin-left:5px}.pair{display:flex;gap:24px;justify-content:space-between}.pair>div{min-width:0}.caption{font-size:12px;color:#93a5ad;margin-top:10px}.bar{height:5px;background:#263339;border-radius:5px;overflow:hidden;margin-top:18px}.bar span{display:block;background:#6bdcb6;height:100%;width:0;transition:width .4s}.bar.cached span{background:#c4a76d}.details{margin-top:18px;display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:#a7b8be}.details b{color:#deeaed;font-weight:500}.network .value{font-size:30px;letter-spacing:-.7px}.badge{font-size:11px;padding:3px 8px;border-radius:20px;background:#213630;color:#83d6b8;float:right;letter-spacing:0}.badge.cached{background:#3b3222;color:#f0c985}.help{margin-top:24px;padding:20px 24px;border-left:2px solid #30434b;background:#0e1619;border-radius:0 12px 12px 0}.help strong{font-size:13px}.help p{font-size:13px;margin-top:5px}footer{display:flex;justify-content:space-between;gap:16px;margin-top:28px;font-size:12px;color:#728a94}a{color:#9ecbbd;text-decoration:none}a:hover{text-decoration:underline}button{border:1px solid #405650;border-radius:8px;background:#1c2e27;color:#d4ece2;padding:8px 14px;font:inherit;cursor:pointer;margin-left:auto;white-space:nowrap}button:hover{background:#294538}button:disabled{opacity:.5;cursor:wait}
-@media(max-width:620px){main{padding:24px 16px}header{gap:12px}header img{width:58px;height:58px}h1{font-size:21px}header small{display:none}.grid{grid-template-columns:1fr}.connection{padding:18px;gap:12px;flex-wrap:wrap}.connection button{margin-left:23px}.card{padding:20px}.value{font-size:38px}footer{flex-direction:column;gap:4px}}
-.connection-actions{display:flex;gap:10px;margin-left:auto;align-items:center;flex-wrap:wrap}.connection-actions button{margin:0}.button-link{border:1px solid #405650;border-radius:8px;padding:8px 14px;white-space:nowrap;font-size:15px}.settings{margin-top:24px;scroll-margin-top:20px}.settings h2{font-size:20px;margin:0}.settings-heading{display:flex;align-items:center;gap:16px;margin-bottom:24px}.settings-heading p{font-size:13px}.settings-heading button{font-size:13px}.settings fieldset{padding:0;margin:0;border:0;min-width:0}.settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.setting{min-width:0}.setting label{display:block;font-size:14px;color:#dce8eb;margin-bottom:10px}.setting output{float:right;color:#80dfb8;font-variant-numeric:tabular-nums}.setting input[type=range]{width:100%;accent-color:#6bdcb6;margin:8px 0;cursor:pointer}.setting select{width:100%;padding:10px 12px;font:inherit;color:#e5eded;border:1px solid #3b4c53;border-radius:8px;background:#0c1316}.setting small{display:block;color:#8ea3ac;font-size:12px;line-height:1.65;margin-top:7px}.hours{display:flex;align-items:center;gap:10px}.hours select{min-width:0;flex:1}.wide{grid-column:1/-1}.settings-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px}.settings-actions button{margin:0}.settings-actions .primary{background:#6bdcb6;color:#10241d;font-weight:600;border-color:#6bdcb6}.settings-message{font-size:13px;margin-top:16px;min-height:22px}.settings-message.error{color:#f0b48f}:focus-visible{outline:2px solid #80dfb8;outline-offset:4px}.settings fieldset:disabled{opacity:.5}
-@media(max-width:620px){.connection-actions{margin-left:23px}.settings-grid{grid-template-columns:1fr}.settings-heading{align-items:flex-start;flex-wrap:wrap}.settings-heading button{margin-left:0}.network .value{font-size:clamp(20px,6vw,30px)}}
+:root {
+  color-scheme: dark;
+  --bg: #0b1012;
+  --surface: #11191d;
+  --surface-sunken: #0c1316;
+  --border: #263339;
+  --border-strong: #3b4c53;
+  --text: #e5eded;
+  --text-soft: #c3d1d4;
+  --muted: #93a5ad;
+  --faint: #6f858d;
+  --track: #263339;
+  --codex: #6bdcb6;
+  --claude: #db977b;
+  --warn: #edbf72;
+  --danger: #f08a7a;
+  --focus: #80dfb8;
+  --radius: 16px;
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1120px; margin: 0 auto; padding: 40px 28px 32px; }
+h1, h2, h3, p { margin: 0; }
+a { color: #9ecbbd; text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+[hidden] { display: none !important; }
 
-main{max-width:1120px}header{margin-bottom:28px}header img{width:64px;height:64px}header p{font-size:13px}header small{border:1px solid #2b3b40;padding:5px 10px;border-radius:20px}
-.section-title{display:flex;align-items:baseline;justify-content:space-between;margin:26px 0 12px}.section-title h2{font-size:14px;font-weight:500;margin:0;color:#bdcdcf}.section-title span{font-size:12px;color:#778d94}
-.ai-card{padding:26px 28px;border-top:2px solid #71dcb6;background:linear-gradient(135deg,#14231f,#11191d 70%)}.ai-card .label{color:#adcebf;letter-spacing:.8px}.ai-card .value{font-size:54px}.ai-card.claude{border-top-color:#db977b;background:linear-gradient(135deg,#2a201c,#11191d 70%)}.claude .label{color:#e4b9a7}.claude .bar span{background:#db977b}.claude .badge:not(.cached){background:#402d23;color:#edbba7}.ai-caption{font-size:12px;color:#93a5ad;margin-bottom:8px}.quota-secondary{display:flex;justify-content:space-between;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid #3c302a;font-size:13px;color:#b8aaa3}.quota-secondary b{font-size:21px;color:#e9d6cc;font-weight:500;font-variant-numeric:tabular-nums}.quota-secondary small{color:#95877f;font-size:11px}.telemetry{grid-template-columns:1.25fr 1fr 1fr}.telemetry .card{padding:20px}.telemetry .value{font-size:28px}.telemetry .pair{gap:14px}.telemetry .details{gap:12px;font-size:12px}.telemetry .label{letter-spacing:.7px}.setting input[type=text],#weather_city_code{width:100%;padding:10px 12px;border:1px solid #3b4c53;border-radius:8px;background:#0c1316;color:#e5eded;font:inherit}.settings .setting{margin-bottom:12px}.setting .toggle{display:flex;gap:12px;align-items:center}.toggle input{width:18px;height:18px;accent-color:#db977b}.claude-note{font-size:12px;color:#a99c95;margin-top:14px}.badge{font-variant-numeric:tabular-nums}
-@media(max-width:860px){.telemetry{grid-template-columns:1fr}.telemetry .pair{justify-content:flex-start;gap:48px}.telemetry .value{font-size:30px}}
-@media(max-width:620px){.section-title span{display:none}.ai-card{padding:22px}.ai-card .value{font-size:46px}}
-@media(prefers-reduced-motion:reduce){.bar span{transition:none}}
+button, .button {
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid #405650; border-radius: 8px; padding: 8px 14px;
+  background: #1c2e27; color: #d4ece2; font: inherit; white-space: nowrap; cursor: pointer;
+}
+button:hover, .button:hover { background: #294538; text-decoration: none; }
+button:disabled { opacity: .5; cursor: wait; }
+button.primary { background: var(--codex); border-color: var(--codex); color: #10241d; font-weight: 600; }
+
+/* Header and connection banner */
+.app-header { display: flex; align-items: center; gap: 16px; margin-bottom: 26px; }
+.app-header img { width: 60px; height: 60px; }
+.app-header h1 { font-size: 26px; letter-spacing: -.6px; }
+.app-header p { font-size: 13px; color: var(--muted); }
+.pill { margin-left: auto; border: 1px solid #2b3b40; border-radius: 20px; padding: 4px 11px; font-size: 12px; color: #81949b; }
+
+.banner {
+  display: flex; align-items: center; gap: 20px; padding: 22px 24px;
+  border: 1px solid #29463e; border-radius: var(--radius); background: #12211d;
+}
+.banner .dot { flex: none; width: 11px; height: 11px; border-radius: 50%; background: var(--codex); box-shadow: 0 0 18px #69ddae44; }
+.banner h2 { font-size: 18px; margin-bottom: 2px; }
+.banner p { font-size: 13px; color: var(--muted); }
+.banner.warn { background: #242016; border-color: #635135; }
+.banner.warn .dot { background: var(--warn); box-shadow: none; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-left: auto; }
+
+/* Sections and cards */
+.section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 28px 0 12px; }
+.section-head h2 { font-size: 14px; font-weight: 500; color: #bdcdcf; }
+.section-head span { font-size: 12px; color: var(--faint); }
+.grid { display: grid; gap: 16px; }
+.grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid.three { grid-template-columns: 1.25fr 1fr 1fr; }
+.card { min-width: 0; padding: 22px 24px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.card-head h3 { font-size: 12px; font-weight: 500; letter-spacing: 1px; color: var(--muted); }
+.card-head h3 span { letter-spacing: 0; opacity: .8; }
+.card-head h3 span::before { content: "/ "; opacity: .6; }
+.badge { flex: none; font-size: 11px; padding: 2px 9px; border-radius: 20px; background: #213630; color: #83d6b8; font-variant-numeric: tabular-nums; }
+.badge.cached { background: #3b3222; color: #f0c985; }
+
+.value { font-size: 44px; line-height: 1.15; font-weight: 600; letter-spacing: -1.5px; font-variant-numeric: tabular-nums; }
+.unit { margin-left: 5px; font-size: 18px; font-weight: 400; letter-spacing: 0; color: #8c9fa7; }
+.caption { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.details { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 16px; font-size: 13px; color: #a7b8be; }
+.details b { font-weight: 500; color: #deeaed; }
+
+/* Progress bars: accent while healthy, warn/danger as quota or load rises. */
+.bar { --fill: var(--codex); height: 6px; margin-top: 16px; overflow: hidden; border-radius: 6px; background: var(--track); }
+.bar span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--fill); transition: width .4s; }
+.bar.thin { height: 4px; margin-top: 10px; }
+.bar.low { --fill: var(--warn); }
+.bar.critical { --fill: var(--danger); }
+.bar.cached { --fill: #6c7c80; }
+
+/* AI quota cards share one structure so both columns line up. */
+.quota { display: flex; flex-direction: column; padding: 24px 28px; border-top: 2px solid var(--codex); background: linear-gradient(135deg, #14231f, var(--surface) 70%); }
+.quota .card-head h3 { color: #adcebf; }
+.quota .value { font-size: 54px; }
+.quota.claude { border-top-color: var(--claude); background: linear-gradient(135deg, #2a201c, var(--surface) 70%); }
+.quota.claude .card-head h3 { color: #e4b9a7; }
+.quota.claude .bar { --fill: var(--claude); }
+.quota.claude .bar.low { --fill: var(--warn); }
+.quota.claude .bar.critical { --fill: var(--danger); }
+.quota.claude .bar.cached { --fill: #6c7c80; }
+.quota.claude .badge:not(.cached) { background: #402d23; color: #edbba7; }
+.secondary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #2a3a3a; font-size: 13px; color: var(--text-soft); }
+.quota.claude .secondary { border-top-color: #3c302a; }
+.secondary small { display: block; font-size: 11px; color: var(--faint); }
+.secondary b { font-size: 21px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.quota .notes { margin-top: auto; padding-top: 14px; font-size: 12px; color: #a99c95; }
+.quota.codex .notes { color: var(--muted); }
+.notes p + a, .notes p + p { display: inline-block; margin-top: 4px; }
+
+/* System, network and display telemetry */
+.telemetry .value { font-size: 28px; letter-spacing: -.7px; }
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.pair > div { min-width: 0; }
+.pair .bar { margin-top: 10px; }
+.country { display: inline-block; margin-right: 8px; padding: 1px 7px; border: 1px solid var(--border-strong); border-radius: 6px; font-size: .62em; font-weight: 600; letter-spacing: .5px; vertical-align: .28em; color: var(--text-soft); }
+.stale-value { color: var(--muted); }
+
+.help { margin-top: 20px; padding: 18px 22px; border-left: 2px solid #30434b; border-radius: 0 12px 12px 0; background: #0e1619; }
+.help strong { font-size: 13px; }
+.help p { margin-top: 4px; font-size: 13px; color: var(--muted); }
+
+/* Settings */
+.settings { margin-top: 24px; scroll-margin-top: 20px; }
+.settings-head { display: flex; align-items: center; gap: 16px; margin-bottom: 22px; }
+.settings-head h2 { font-size: 20px; }
+.settings-head p { font-size: 13px; color: var(--muted); }
+.settings-head button { margin-left: auto; font-size: 13px; }
+.settings fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.settings fieldset:disabled { opacity: .5; }
+.settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 28px; }
+.setting { min-width: 0; }
+.setting.wide { grid-column: 1 / -1; }
+.setting > label, .setting > .label { display: block; margin-bottom: 8px; font-size: 14px; color: #dce8eb; }
+.setting output { float: right; color: var(--focus); font-variant-numeric: tabular-nums; }
+.setting small { display: block; margin-top: 6px; font-size: 12px; line-height: 1.65; color: #8ea3ac; }
+.setting input[type=range] { width: 100%; margin: 8px 0; accent-color: var(--codex); cursor: pointer; }
+.setting select, .setting input[type=text] { width: 100%; padding: 9px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-sunken); color: var(--text); font: inherit; }
+.hours { display: flex; align-items: center; gap: 10px; }
+.hours select { flex: 1; min-width: 0; }
+.setting .toggle { display: flex; align-items: center; gap: 12px; }
+.toggle input { width: 18px; height: 18px; accent-color: var(--claude); }
+.settings-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
+.settings-message { min-height: 22px; margin-top: 14px; font-size: 13px; color: var(--text-soft); }
+.settings-message.error { color: #f0b48f; }
+
+footer { display: flex; justify-content: space-between; gap: 16px; margin-top: 26px; font-size: 12px; color: #728a94; }
+
+@media (max-width: 860px) {
+  .grid.three { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  main { padding: 24px 16px; }
+  .app-header { gap: 12px; }
+  .app-header img { width: 48px; height: 48px; }
+  .app-header h1 { font-size: 21px; }
+  .pill, .section-head span { display: none; }
+  .banner { flex-wrap: wrap; gap: 12px; padding: 18px; }
+  .actions { margin-left: 23px; }
+  .grid.two, .settings-grid { grid-template-columns: 1fr; }
+  .card, .quota { padding: 20px; }
+  .quota .value { font-size: 46px; }
+  .settings-head { flex-wrap: wrap; align-items: flex-start; }
+  .settings-head button { margin-left: 0; }
+  footer { flex-direction: column; gap: 4px; }
+}
+@media (prefers-reduced-motion: reduce) { .bar span { transition: none; } }
 </style>
 <main>
-  <header><img src="/icon.png" alt="MiniDisplay"><div><h1>MiniDisplay Bridge</h1><p>电脑与桌面小屏的连接中心</p></div><small id="version">本机状态</small></header>
-  <section class="connection warn" id="connection" aria-live="polite"><span class="dot"></span><div><h2 id="connection-title">正在读取连接状态…</h2><p id="connection-detail">正在连接本机服务并读取小屏状态。</p></div><div class="connection-actions"><button id="refresh" type="button">刷新状态</button><a class="button-link" href="#settings">显示屏设置</a></div></section>
-  <div class="section-title"><h2>AI 账户余量</h2><span>独立刷新 · 小屏同步显示</span></div>
-  <div class="grid ai-grid">
-    <section class="card ai-card"><div class="label">CODEX <span style="opacity:.6">/</span> 本周余量 <span class="badge cached" id="usage-badge">等待数据</span></div><div class="value"><span id="usage">--</span><span class="unit">%</span></div><div class="bar" id="usage-bar"><span></span></div><div class="caption" id="usage-detail">读取当前登录账号的周限额</div></section>
-    <section class="card ai-card claude"><div class="label">CLAUDE <span style="opacity:.6">/</span> 5 小时余量 <span class="badge cached" id="claude-badge">未连接</span></div><div class="value"><span id="claude-five">--</span><span class="unit">%</span></div><div class="bar" id="claude-bar"><span></span></div><div class="caption" id="claude-five-reset">等待账户数据</div><div class="quota-secondary"><span>每周余量<br><small id="claude-week-reset">--</small></span><b><span id="claude-week">--</span>%</b></div><p class="claude-note" id="claude-detail">在下方设置中开启 Claude 额度连接。</p><a class="claude-note" href="https://claude.ai/settings/usage" target="_blank" rel="noopener noreferrer">在 Claude 核对额度 ↗</a></section>
-  </div>
-  <div class="section-title"><h2>电脑与小屏</h2><span>每秒更新</span></div>
-  <div class="grid telemetry">
-    <section class="card"><div class="label">SYSTEM / 系统负载</div><div class="pair"><div><div class="value"><span id="cpu">--</span><span class="unit">%</span></div><div class="caption">CPU 使用率</div></div><div><div class="value"><span id="memory">--</span><span class="unit">%</span></div><div class="caption">内存使用率</div></div></div><div class="details"><span>CPU 温度 <b id="cpu-temp">--</b></span><span>GPU 温度 <b id="gpu-temp">--</b></span></div></section>
+  <header class="app-header">
+    <img src="/icon.png" alt="MiniDisplay">
+    <div><h1>MiniDisplay Bridge</h1><p>电脑与桌面小屏的连接中心</p></div>
+    <span class="pill" id="version">本机状态</span>
+  </header>
 
-    <section class="card network"><div class="label">NETWORK / 实时速率</div><div class="pair"><div><div class="value" id="download">--</div><div class="caption">↓ 下载</div></div><div><div class="value" id="upload">--</div><div class="caption">↑ 上传</div></div></div><div class="details"><span>默认网卡 <b id="interface">--</b></span></div></section>
-    <section class="card network"><div class="label">DISPLAY / 小屏状态</div><div class="value" id="location">--</div><div class="caption" id="location-detail">公网出口位置</div><div class="details"><span>亮度 <b id="brightness">--</b></span><span>模式 <b id="mode">--</b></span></div></section>
+  <section class="banner warn" id="connection" aria-live="polite">
+    <span class="dot" aria-hidden="true"></span>
+    <div><h2 id="connection-title">正在读取连接状态…</h2><p id="connection-detail">正在连接本机服务并读取小屏状态。</p></div>
+    <div class="actions"><button id="refresh" type="button">刷新状态</button><a class="button" href="#settings">显示屏设置</a></div>
+  </section>
+
+  <div class="section-head"><h2>AI 账户余量</h2><span>独立刷新 · 小屏同步显示</span></div>
+  <div class="grid two">
+    <section class="card quota codex" aria-label="Codex 本周余量">
+      <div class="card-head"><h3>CODEX <span>本周余量</span></h3><span class="badge cached" id="usage-badge">等待数据</span></div>
+      <div class="value"><span id="usage">--</span><span class="unit">%</span></div>
+      <div class="bar" id="usage-bar"><span></span></div>
+      <p class="caption" id="usage-reset">下次重置 --</p>
+      <div class="secondary"><span>距离重置<small id="usage-updated">--</small></span><b id="usage-countdown">--</b></div>
+      <div class="notes"><p id="usage-detail">读取当前登录账号的周限额。</p></div>
+    </section>
+    <section class="card quota claude" aria-label="Claude 额度">
+      <div class="card-head"><h3>CLAUDE <span>5 小时余量</span></h3><span class="badge cached" id="claude-badge">未连接</span></div>
+      <div class="value"><span id="claude-five">--</span><span class="unit">%</span></div>
+      <div class="bar" id="claude-bar"><span></span></div>
+      <p class="caption" id="claude-five-reset">等待账户数据</p>
+      <div class="secondary"><span>每周余量<small id="claude-week-reset">--</small></span><b><span id="claude-week">--</span>%</b></div>
+      <div class="bar thin" id="claude-week-bar"><span></span></div>
+      <div class="notes"><p id="claude-detail">在下方设置中开启 Claude 额度连接。</p><a href="https://claude.ai/settings/usage" target="_blank" rel="noopener noreferrer">在 Claude 核对额度 ↗</a></div>
+    </section>
   </div>
+
+  <div class="section-head"><h2>电脑与小屏</h2><span>每秒更新</span></div>
+  <div class="grid three telemetry">
+    <section class="card">
+      <div class="card-head"><h3>SYSTEM <span>系统负载</span></h3></div>
+      <div class="pair">
+        <div><div class="value"><span id="cpu">--</span><span class="unit">%</span></div><div class="bar thin" id="cpu-bar"><span></span></div><p class="caption">CPU 使用率</p></div>
+        <div><div class="value"><span id="memory">--</span><span class="unit">%</span></div><div class="bar thin" id="memory-bar"><span></span></div><p class="caption">内存使用率</p></div>
+      </div>
+      <div class="details"><span>CPU 温度 <b id="cpu-temp">--</b></span><span>GPU 温度 <b id="gpu-temp">--</b></span></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h3>NETWORK <span>实时速率</span></h3></div>
+      <div class="pair">
+        <div><div class="value" id="download">--</div><p class="caption">↓ 下载</p></div>
+        <div><div class="value" id="upload">--</div><p class="caption">↑ 上传</p></div>
+      </div>
+      <div class="details"><span>默认网卡 <b id="interface">--</b></span></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h3>DISPLAY <span>小屏状态</span></h3></div>
+      <div class="value" id="location">--</div>
+      <p class="caption" id="location-detail">公网出口位置</p>
+      <div class="details"><span>亮度 <b id="brightness">--</b></span><span>模式 <b id="mode">--</b></span></div>
+    </section>
+  </div>
+
   <aside class="help" id="temperature-help" hidden><strong>Windows 温度采集</strong><p id="temperature-detail"></p><p>右键右下角托盘图标 → 启动温度采集。首次使用可从托盘打开 PawnIO 官方下载页安装驱动。采集会随连接程序退出。</p></aside>
-  <aside class="help"><strong id="help-title">连接提示</strong><p id="help-text">连接一块 USB 状态屏后会自动识别。多个 USB 串口同时连接时，需要明确指定状态屏端口。</p></aside>
+  <aside class="help" id="connection-help"><strong id="help-title">连接提示</strong><p id="help-text">连接一块 USB 状态屏后会自动识别。多个 USB 串口同时连接时，需要明确指定状态屏端口。</p></aside>
+
   <section class="settings card" id="settings" aria-labelledby="settings-title">
-    <div class="settings-heading"><div><h2 id="settings-title">显示屏设置</h2><p>保存到这台电脑，下次启动自动恢复；无需重新刷固件。</p></div><button id="settings-reload" type="button" title="重新读取已保存设置，放弃尚未保存的修改">重新加载</button></div>
+    <div class="settings-head"><div><h2 id="settings-title">显示屏设置</h2><p>保存到这台电脑，下次启动自动恢复；无需重新刷固件。</p></div><button id="settings-reload" type="button" title="重新读取已保存设置，放弃尚未保存的修改">重新加载</button></div>
     <form id="settings-form"><fieldset id="settings-fields" disabled>
       <div class="settings-grid">
         <div class="setting"><label for="day_brightness">日间亮度 <output id="day_brightness-value">50%</output></label><input id="day_brightness" type="range" min="0" max="100" step="1" value="50"><small>0% 为关闭背光，USB 数据仍会更新。</small></div>
         <div class="setting"><label for="night_brightness">夜间亮度上限 <output id="night_brightness-value">10%</output></label><input id="night_brightness" type="range" min="0" max="100" step="1" value="10"><small>不会比日间更亮；以电脑本地时间判断夜间时段。</small></div>
         <div class="setting"><label for="offline_brightness">断线亮度上限 <output id="offline_brightness-value">5%</output></label><input id="offline_brightness" type="range" min="0" max="100" step="1" value="5"><small>连续 4 秒无数据后生效，不会把已调暗的屏幕变亮。</small></div>
-        <div class="setting"><label id="night-hours-label">夜间时段</label><div class="hours"><select id="night_start_hour" aria-label="夜间开始时间"></select><span>至</span><select id="night_end_hour" aria-label="夜间结束时间"></select></div><small>支持跨午夜；开始与结束相同即关闭夜间调暗。</small></div>
-        <div class="setting wide"><label for="serial_port">USB 状态屏端口</label><select id="serial_port"><option value="">自动识别（仅连接一个 USB 串口时）</option></select><small>只选择系统状态屏，不要选择天气屏。更换端口后会自动重新连接；插入新设备后可点“重新加载”更新列表。</small></div>
+        <div class="setting"><span class="label" id="night-hours-label">夜间时段</span><div class="hours" role="group" aria-labelledby="night-hours-label"><select id="night_start_hour" aria-label="夜间开始时间"></select><span>至</span><select id="night_end_hour" aria-label="夜间结束时间"></select></div><small>支持跨午夜；开始与结束相同即关闭夜间调暗。</small></div>
+        <div class="setting"><label for="serial_port">USB 状态屏端口</label><select id="serial_port"><option value="">自动识别（仅连接一个 USB 串口时）</option></select><small>只选择系统状态屏，不要选择天气屏。更换端口后会自动重新连接；插入新设备后可点“重新加载”更新列表。</small></div>
+        <div class="setting"><label for="weather_city_code">断联天气城市代码</label><input id="weather_city_code" type="text" inputmode="numeric" maxlength="9" value="0"><small>填 0 按电脑网络位置识别，或填中国天气网的 9 位城市代码。电脑每 30 分钟同步一次；断联后保留最后的天气。</small></div>
+        <div class="setting wide"><label class="toggle" for="claude_enabled"><input id="claude_enabled" type="checkbox">连接 Claude 账户额度</label><small>读取本机 Claude Code 的已有登录，仅向 Anthropic 官方额度服务发送登录令牌。桌面/网页版用户需在 Claude Code 登录同一账号；程序不保存令牌、不调用对话模型。采用 CodexBar 同类 OAuth 读取方式，每两分钟同步；登录过期时先尝试由 Claude 官方程序恢复。 <a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noopener noreferrer">Claude 登录准备 ↗</a></small></div>
       </div>
-      <div class="setting"><label for="weather_city_code">断联天气城市代码</label><input id="weather_city_code" inputmode="numeric" maxlength="9" value="0"><small>填 0 按电脑网络位置识别，或填中国天气网的 9 位城市代码。电脑每 30 分钟同步一次；断联后保留最后的天气。</small></div>
-      <div class="setting wide"><label class="toggle" for="claude_enabled"><input id="claude_enabled" type="checkbox">连接 Claude 账户额度</label><small>读取本机 Claude Code 的已有登录，仅向 Anthropic 官方额度服务发送登录令牌。桌面/网页版用户需在 Claude Code 登录同一账号；程序不保存令牌、不调用对话模型。采用 CodexBar 同类 OAuth 读取方式，每两分钟同步；登录过期时先尝试由 Claude 官方程序恢复。</small><small><a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noopener noreferrer">Claude 登录准备 ↗</a></small></div>
       <div class="settings-actions"><button class="primary" id="settings-save" type="submit">保存并应用</button><button id="reconnect" type="button">重新连接 USB</button></div>
-    </fieldset></form><p class="settings-message" id="settings-message" role="status">正在读取设置…</p>
+    </fieldset></form>
+    <p class="settings-message" id="settings-message" role="status">正在读取设置…</p>
   </section>
   <footer><span id="updated">等待首次同步</span><span>本机状态与设置 · <a href="/health">诊断信息</a></span></footer>
 </main>
 <script>
 'use strict';
-const $=id=>document.getElementById(id);
-const text=(id,value)=>{$(id).textContent=value;};
-let busy=false, lastSuccess=0;
-const number=value=>typeof value==='number'&&Number.isFinite(value);
-const percent=value=>number(value)?Math.max(0,Math.min(100,value)).toFixed(0):'--';
-const temperature=value=>number(value)?value.toFixed(0)+' °C':'--';
-function rate(value){if(!number(value))return '--';let unit=0;const units=['B/s','KB/s','MB/s','GB/s'];while(value>=1024&&unit<3){value/=1024;unit++;}return (value>=100||unit===0?value.toFixed(0):value.toFixed(1))+' '+units[unit];}
-function flag(location){const country=(location||'').split('-')[0];return /^[A-Z]{2}$/.test(country)?String.fromCodePoint(...[...country].map(c=>127397+c.charCodeAt(0)))+' ':'';}
-function moment(seconds){return number(seconds)?new Date(seconds*1000).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'--';}
-function render(data){
- const d=data.desktop,u=data.usage,usb=data.usb,c=data.claude||{};
- const five=c.five_hour,week=c.seven_day;
- text('claude-five',percent(five?.remaining_percent));text('claude-week',percent(week?.remaining_percent));
- text('claude-badge',c.ok?(c.stale?'上次数据':'已同步'):(c.error==='disabled'?'未开启':['connecting','renewing'].includes(c.error)?'连接中':'待连接'));
- $('claude-badge').classList.toggle('cached',!c.ok||c.stale);$('claude-bar').classList.toggle('cached',!!c.stale);
- $('claude-bar').firstElementChild.style.width=(five?percent(five.remaining_percent):'0')+'%';
- text('claude-five-reset',five?(five.reset_at?'下次重置 '+moment(five.reset_at):'当前时段尚未开始'):'5 小时窗口暂无数据');
- text('claude-week-reset',week?(week.reset_at?'重置于 '+moment(week.reset_at):'本周窗口尚未开始'):'每周窗口暂无数据');
- const claudeErrors={disabled:'请在下方设置中开启 Claude 额度连接。',connecting:'正在读取账户额度…',renewing:'正在通过 Claude 官方程序恢复登录…',missing_scope:'当前登录缺少额度读取权限，请使用 Claude Code 的账号登录。',login_required:'未找到可用登录。请先在 Claude Code 登录与桌面/网页版相同的账号。',login_expired:'Claude 登录已过期，请在 Claude Code 重新登录；连接程序会自动重试。',access_denied:'当前登录无法访问订阅额度，请核对 Claude 账号和套餐。',rate_limited:'Claude 暂时限制查询频率，稍后自动重试。',network_error:'暂时无法连接 Claude，稍后自动重试。',service_unavailable:'Claude 额度服务暂不可用，稍后自动重试。',invalid_response:'暂时无法识别 Claude 的额度数据。',no_quota:'当前账号没有可显示的订阅额度。',awaiting_reset:'额度窗口已结束，正在等待新数据。'};
- text('claude-detail',(claudeErrors[c.error]||(c.stale?'更新暂不可用，保留上次余量。':'账户额度已同步。'))+(c.fetched_at?' · 更新于 '+moment(c.fetched_at):''));
- $('temperature-help').hidden=d.host_platform!=='Windows'||!d.temperature_error;
- text('temperature-detail',d.temperature_error||'温度数据已同步。');
- const active=usb.connected&&d.ok&&number(usb.last_sent_at)&&Date.now()/1000-usb.last_sent_at<5;
- $('connection').classList.toggle('warn',!active);
- const titles={waiting:'等待 USB 小屏',connecting:'正在建立 USB 连接',retrying:'连接中断，正在重试','waiting-data':'等待系统数据',disabled:'仅采集模式',stopped:'桥接已停止'};
- const explanations={waiting:'请连接 USB 数据线，程序会自动识别状态屏。',connecting:'正在等待设备就绪，通常需要两秒。',retrying:'USB 可能已断开或被其他程序占用，正在自动重试。','waiting-data':'系统采集暂不可用，正在重新采集。',disabled:'当前只读取电脑状态，没有向 USB 小屏发送数据。',stopped:'请重新打开 MiniDisplay Bridge。'};
- text('connection-title',active?'小屏已连接 · 正在发送数据':titles[usb.phase]||'连接暂不可用');
- text('connection-detail',active?'端口 '+(usb.port||'--')+' · 系统数据持续发送':(usb.error||'').includes('multiple')?'检测到多个 USB 串口，请在下方“显示屏设置”选择状态屏端口。':explanations[usb.phase]||'请稍候，程序会自动尝试恢复连接。');
- text('version','v'+data.version+' · '+(d.host_platform==='Darwin'?'macOS':d.host_platform));
- text('cpu',d.ok?percent(d.cpu_percent):'--');text('memory',d.ok?percent(d.memory_percent):'--');
- text('cpu-temp',d.ok?temperature(d.cpu_temperature_celsius):'--');text('gpu-temp',d.ok?temperature(d.gpu_temperature_celsius):'--');
- text('usage',u.ok?percent(u.remaining_percent):'--');text('usage-badge',u.ok?(u.stale?'上次数据':'已同步'):'等待数据');
- $('usage-badge').classList.toggle('cached',!u.ok||u.stale);$('usage-bar').classList.toggle('cached',u.stale);
- $('usage-bar').firstElementChild.style.width=(u.ok?percent(u.remaining_percent):'0')+'%';
- text('usage-detail',u.ok?(u.stale?'更新暂不可用，保留上次余量。':'下次重置 '+moment(u.reset_at))+' · 更新于 '+moment(u.fetched_at):'暂未取得余量，请确认 Codex 已登录且网络可用。');
- text('download',rate(d.ok?d.download_bps:null));text('upload',rate(d.ok?d.upload_bps:null));text('interface',d.interface||'--');
- text('location',flag(d.network_location)+(d.network_location||'--'));text('location-detail',d.network_location_stale?'公网出口位置 · 上次数据':'公网出口位置');
- text('brightness',d.ok?d.display_brightness_percent+'%':'--');text('mode',d.ok?(d.night_mode?'夜间调暗':'日间'):'--');
- text('help-title',active?'连接正常':usb.phase==='disabled'?'仅采集模式':'恢复连接');
- text('help-text',active?'此页面自动刷新。AI 额度或位置服务暂不可用时，其余系统指标会继续发送；USB 重新插入后会自动重连。':usb.phase==='disabled'?'以默认参数启动桥接程序，即可启用 USB 输出。当前页面展示电脑端采集的数据。':'检查 USB 数据线及设备供电，并关闭正在占用该串口的烧录工具或串口监视器。多个串口同时连接时，在启动参数中指定状态屏端口。');
- text('updated','页面同步于 '+new Date().toLocaleTimeString('zh-CN'));
-}
-async function refresh(){
- if(busy)return;busy=true;$('refresh').disabled=true;
- const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),3500);
- try{const response=await fetch('/v1/overview',{cache:'no-store',signal:controller.signal});if(!response.ok)throw Error();const data=await response.json();render(data);lastSuccess=Date.now();}
- catch{for(const id of ['usage','claude-five','claude-week'])text(id,'--');for(const id of ['usage-badge','claude-badge']){text(id,'连接中断');$(id).classList.add('cached');}for(const id of ['usage-bar','claude-bar'])$(id).firstElementChild.style.width='0%';$('connection').classList.add('warn');text('connection-title','暂时联系不上桥接程序');text('connection-detail','请打开 MiniDisplay Bridge；恢复后此页面会自动重新同步。');text('updated',lastSuccess?'连接中断 · 页面保留上次显示':'尚未连接到本机服务');}
- finally{clearTimeout(timeout);busy=false;$('refresh').disabled=false;}
-}
-$('refresh').addEventListener('click',refresh);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});setInterval(()=>{if(!document.hidden)refresh();},1000);refresh();
+const $ = id => document.getElementById(id);
+const text = (id, value) => { $(id).textContent = value; };
+const number = value => typeof value === 'number' && Number.isFinite(value);
+const percent = value => number(value) ? Math.max(0, Math.min(100, value)).toFixed(0) : '--';
+const temperature = value => number(value) ? value.toFixed(0) + ' °C' : '--';
 
-const brightnessFields=['day_brightness','night_brightness','offline_brightness'];
-const hourFields=['night_start_hour','night_end_hour'];
-let settingsToken='',settingsRevision=0,settingsBusy=false;
-for(const id of hourFields){for(let hour=0;hour<24;hour++)$(id).add(new Option(String(hour).padStart(2,'0')+':00',String(hour)));}
-function settingsMessage(message,error=false){text('settings-message',message);$('settings-message').classList.toggle('error',error);}
-function settingsValues(){const values={};for(const id of [...brightnessFields,...hourFields])values[id]=Number($(id).value);values.serial_port=$('serial_port').value||null;values.weather_city_code=$('weather_city_code').value.trim();values.claude_enabled=$('claude_enabled').checked;return values;}
-function showSettings(data){
- settingsToken=data.token;settingsRevision=data.revision;
- for(const id of [...brightnessFields,...hourFields])$(id).value=data.settings[id];
- for(const id of brightnessFields)text(id+'-value',$(id).value+'%');
- $('serial_port').replaceChildren(new Option('自动识别（仅连接一个 USB 串口时）',''));
- for(const port of data.ports)$('serial_port').add(new Option(port,port));
- $('serial_port').value=data.settings.serial_port||'';
- $('weather_city_code').value=data.settings.weather_city_code||'0';
- $('claude_enabled').checked=!!data.settings.claude_enabled;
+function rate(value) {
+  if (!number(value)) return '--';
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+  let unit = 0;
+  while (value >= 1024 && unit < 3) { value /= 1024; unit++; }
+  return (value >= 100 || unit === 0 ? value.toFixed(0) : value.toFixed(1)) + ' ' + units[unit];
 }
-async function settingsRequest(path,body){
- const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),5000);
- try{
-  const options={cache:'no-store',signal:controller.signal};
-  if(body!==undefined)Object.assign(options,{method:'POST',headers:{'Content-Type':'application/json','X-MiniDisplay-Token':settingsToken},body:JSON.stringify(body)});
-  const response=await fetch(path,options),data=await response.json();
-  if(!response.ok||!data.ok)throw Error(data.error||'无法读取设置');
-  return data;
- }catch(error){if(error.name==='AbortError')throw Error('未收到确认，请重新加载设置核对。');throw error;}
- finally{clearTimeout(timer);}
+function moment(seconds) {
+  return number(seconds) ? new Date(seconds * 1000).toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : '--';
 }
-async function settingsAction(action){
- if(settingsBusy)return;settingsBusy=true;$('settings-fields').disabled=true;$('settings-reload').disabled=true;
- try{await action();}catch(error){settingsMessage(error.message||'操作失败，请重新加载后重试。',true);}
- finally{settingsBusy=false;$('settings-fields').disabled=!settingsToken;$('settings-reload').disabled=false;}
+function countdown(seconds) {
+  if (!number(seconds)) return '--';
+  const minutes = Math.max(0, Math.round((seconds - Date.now() / 1000) / 60));
+  const days = Math.floor(minutes / 1440), hours = Math.floor(minutes % 1440 / 60);
+  if (days) return days + ' 天 ' + hours + ' 小时';
+  if (hours) return hours + ' 小时 ' + minutes % 60 + ' 分';
+  return minutes + ' 分钟';
 }
-async function loadSettings(){await settingsAction(async()=>{const data=await settingsRequest('/v1/settings');showSettings(data);settingsMessage(data.warning||'调整后点击“保存并应用”；自动刷新状态不会覆盖未保存的修改。',!!data.warning);});}
-for(const id of [...brightnessFields,...hourFields,'serial_port','weather_city_code','claude_enabled'])$(id).addEventListener('input',()=>{
- if(brightnessFields.includes(id))text(id+'-value',$(id).value+'%');
- settingsMessage('有未保存的修改。');
+// Same thresholds as the USB screen (display_theme.h): quota remaining warns
+// below 30% and is critical below 10%; load warns from 65% and is critical from 85%.
+function setBar(id, value, {stale = false, load = false} = {}) {
+  const bar = $(id), active = number(value) && !stale;
+  const critical = active && (load ? value >= 85 : value < 10);
+  const low = active && !critical && (load ? value >= 65 : value < 30);
+  bar.firstElementChild.style.width = (number(value) ? percent(value) : '0') + '%';
+  bar.classList.toggle('cached', stale);
+  bar.classList.toggle('critical', critical);
+  bar.classList.toggle('low', low);
+}
+function showLocation(label, stale) {
+  const target = $('location');
+  const [country, region] = (label || '').split('-');
+  target.replaceChildren();
+  target.classList.toggle('stale-value', !!stale);
+  if (!/^[A-Z]{2}$/.test(country || '')) { target.textContent = '--'; return; }
+  const badge = document.createElement('span');
+  badge.className = 'country';
+  badge.textContent = country;
+  target.append(badge, region || country);
+}
+
+const claudeErrors = {
+  disabled: '请在下方设置中开启 Claude 额度连接。',
+  connecting: '正在读取账户额度…',
+  renewing: '正在通过 Claude 官方程序恢复登录…',
+  missing_scope: '当前登录缺少额度读取权限，请使用 Claude Code 的账号登录。',
+  login_required: '未找到可用登录。请先在 Claude Code 登录与桌面/网页版相同的账号。',
+  login_expired: 'Claude 登录已过期，请在 Claude Code 重新登录；连接程序会自动重试。',
+  access_denied: '当前登录无法访问订阅额度，请核对 Claude 账号和套餐。',
+  rate_limited: 'Claude 暂时限制查询频率，稍后自动重试。',
+  network_error: '暂时无法连接 Claude，稍后自动重试。',
+  service_unavailable: 'Claude 额度服务暂不可用，稍后自动重试。',
+  invalid_response: '暂时无法识别 Claude 的额度数据。',
+  no_quota: '当前账号没有可显示的订阅额度。',
+  awaiting_reset: '额度窗口已结束，正在等待新数据。',
+};
+const usbTitles = {waiting: '等待 USB 小屏', connecting: '正在建立 USB 连接', retrying: '连接中断，正在重试', 'waiting-data': '等待系统数据', disabled: '仅采集模式', stopped: '桥接已停止'};
+const usbExplanations = {waiting: '请连接 USB 数据线，程序会自动识别状态屏。', connecting: '正在等待设备就绪，通常需要两秒。', retrying: 'USB 可能已断开或被其他程序占用，正在自动重试。', 'waiting-data': '系统采集暂不可用，正在重新采集。', disabled: '当前只读取电脑状态，没有向 USB 小屏发送数据。', stopped: '请重新打开 MiniDisplay Bridge。'};
+
+function renderCodex(u) {
+  text('usage', u.ok ? percent(u.remaining_percent) : '--');
+  text('usage-badge', u.ok ? (u.stale ? '上次数据' : '已同步') : '等待数据');
+  $('usage-badge').classList.toggle('cached', !u.ok || u.stale);
+  setBar('usage-bar', u.ok ? u.remaining_percent : null, {stale: !!u.stale});
+  text('usage-reset', u.ok && u.reset_at ? '下次重置 ' + moment(u.reset_at) : '下次重置 --');
+  text('usage-countdown', u.ok ? countdown(u.reset_at) : '--');
+  text('usage-updated', u.ok ? '更新于 ' + moment(u.fetched_at) : '--');
+  text('usage-detail', u.ok ? (u.stale ? '更新暂不可用，保留上次余量。' : '周限额已同步，小屏同时显示。') : '暂未取得余量，请确认 Codex 已登录且网络可用。');
+}
+
+function renderClaude(c) {
+  const five = c.five_hour, week = c.seven_day;
+  text('claude-five', percent(five?.remaining_percent));
+  text('claude-week', percent(week?.remaining_percent));
+  text('claude-badge', c.ok ? (c.stale ? '上次数据' : '已同步') : c.error === 'disabled' ? '未开启' : ['connecting', 'renewing'].includes(c.error) ? '连接中' : '待连接');
+  $('claude-badge').classList.toggle('cached', !c.ok || !!c.stale);
+  setBar('claude-bar', five?.remaining_percent, {stale: !!c.stale});
+  setBar('claude-week-bar', week?.remaining_percent, {stale: !!c.stale});
+  text('claude-five-reset', five ? (five.reset_at ? '下次重置 ' + moment(five.reset_at) + ' · 剩 ' + countdown(five.reset_at) : '当前时段尚未开始') : '5 小时窗口暂无数据');
+  text('claude-week-reset', week ? (week.reset_at ? '重置于 ' + moment(week.reset_at) : '本周窗口尚未开始') : '每周窗口暂无数据');
+  text('claude-detail', (claudeErrors[c.error] || (c.stale ? '更新暂不可用，保留上次余量。' : '账户额度已同步。')) + (c.fetched_at ? '更新于 ' + moment(c.fetched_at) : ''));
+}
+
+function renderDesktop(d) {
+  text('cpu', d.ok ? percent(d.cpu_percent) : '--');
+  text('memory', d.ok ? percent(d.memory_percent) : '--');
+  setBar('cpu-bar', d.ok ? d.cpu_percent : null, {load: true});
+  setBar('memory-bar', d.ok ? d.memory_percent : null, {load: true});
+  text('cpu-temp', d.ok ? temperature(d.cpu_temperature_celsius) : '--');
+  text('gpu-temp', d.ok ? temperature(d.gpu_temperature_celsius) : '--');
+  text('download', rate(d.ok ? d.download_bps : null));
+  text('upload', rate(d.ok ? d.upload_bps : null));
+  text('interface', d.interface || '--');
+  showLocation(d.network_location, d.network_location_stale);
+  text('location-detail', d.network_location_stale ? '公网出口位置 · 上次数据' : '公网出口位置');
+  text('brightness', d.ok ? d.display_brightness_percent + '%' : '--');
+  text('mode', d.ok ? (d.night_mode ? '夜间调暗' : '日间') : '--');
+  $('temperature-help').hidden = d.host_platform !== 'Windows' || !d.temperature_error;
+  text('temperature-detail', d.temperature_error || '温度数据已同步。');
+}
+
+function renderConnection(data) {
+  const d = data.desktop, usb = data.usb;
+  const active = usb.connected && d.ok && number(usb.last_sent_at) && Date.now() / 1000 - usb.last_sent_at < 5;
+  $('connection').classList.toggle('warn', !active);
+  text('connection-title', active ? '小屏已连接 · 正在发送数据' : usbTitles[usb.phase] || '连接暂不可用');
+  text('connection-detail', active ? '端口 ' + (usb.port || '--') + ' · 系统数据持续发送'
+    : (usb.error || '').includes('multiple') ? '检测到多个 USB 串口，请在下方“显示屏设置”选择状态屏端口。'
+    : usbExplanations[usb.phase] || '请稍候，程序会自动尝试恢复连接。');
+  // The banner already confirms a healthy link; only show guidance when action helps.
+  $('connection-help').hidden = active;
+  text('help-title', usb.phase === 'disabled' ? '仅采集模式' : '恢复连接');
+  text('help-text', usb.phase === 'disabled'
+    ? '以默认参数启动桥接程序，即可启用 USB 输出。当前页面展示电脑端采集的数据。'
+    : '检查 USB 数据线及设备供电，并关闭正在占用该串口的烧录工具或串口监视器。多个串口同时连接时，在下方设置中指定状态屏端口。');
+  text('version', 'v' + data.version + ' · ' + (d.host_platform === 'Darwin' ? 'macOS' : d.host_platform));
+}
+
+let busy = false, lastSuccess = 0;
+async function refresh() {
+  if (busy) return;
+  busy = true;
+  $('refresh').disabled = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3500);
+  try {
+    const response = await fetch('/v1/overview', {cache: 'no-store', signal: controller.signal});
+    if (!response.ok) throw Error();
+    const data = await response.json();
+    renderConnection(data);
+    renderCodex(data.usage);
+    renderClaude(data.claude || {});
+    renderDesktop(data.desktop);
+    text('updated', '页面同步于 ' + new Date().toLocaleTimeString('zh-CN'));
+    lastSuccess = Date.now();
+  } catch {
+    for (const id of ['usage', 'claude-five', 'claude-week']) text(id, '--');
+    for (const id of ['usage-badge', 'claude-badge']) { text(id, '连接中断'); $(id).classList.add('cached'); }
+    for (const id of ['usage-bar', 'claude-bar', 'claude-week-bar']) setBar(id, null);
+    $('connection').classList.add('warn');
+    text('connection-title', '暂时联系不上桥接程序');
+    text('connection-detail', '请打开 MiniDisplay Bridge；恢复后此页面会自动重新同步。');
+    text('updated', lastSuccess ? '连接中断 · 页面保留上次显示' : '尚未连接到本机服务');
+  } finally {
+    clearTimeout(timeout);
+    busy = false;
+    $('refresh').disabled = false;
+  }
+}
+$('refresh').addEventListener('click', refresh);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+setInterval(() => { if (!document.hidden) refresh(); }, 1000);
+refresh();
+
+// Settings: optimistic revision + per-session token, validated again by the bridge.
+const brightnessFields = ['day_brightness', 'night_brightness', 'offline_brightness'];
+const hourFields = ['night_start_hour', 'night_end_hour'];
+let settingsToken = '', settingsRevision = 0, settingsBusy = false;
+for (const id of hourFields) {
+  for (let hour = 0; hour < 24; hour++) $(id).add(new Option(String(hour).padStart(2, '0') + ':00', String(hour)));
+}
+function settingsMessage(message, error = false) {
+  text('settings-message', message);
+  $('settings-message').classList.toggle('error', error);
+}
+function settingsValues() {
+  const values = {};
+  for (const id of [...brightnessFields, ...hourFields]) values[id] = Number($(id).value);
+  values.serial_port = $('serial_port').value || null;
+  values.weather_city_code = $('weather_city_code').value.trim();
+  values.claude_enabled = $('claude_enabled').checked;
+  return values;
+}
+function showSettings(data) {
+  settingsToken = data.token;
+  settingsRevision = data.revision;
+  for (const id of [...brightnessFields, ...hourFields]) $(id).value = data.settings[id];
+  for (const id of brightnessFields) text(id + '-value', $(id).value + '%');
+  $('serial_port').replaceChildren(new Option('自动识别（仅连接一个 USB 串口时）', ''));
+  for (const port of data.ports) $('serial_port').add(new Option(port, port));
+  $('serial_port').value = data.settings.serial_port || '';
+  $('weather_city_code').value = data.settings.weather_city_code || '0';
+  $('claude_enabled').checked = !!data.settings.claude_enabled;
+}
+async function settingsRequest(path, body) {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const options = {cache: 'no-store', signal: controller.signal};
+    if (body !== undefined) {
+      Object.assign(options, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-MiniDisplay-Token': settingsToken}, body: JSON.stringify(body)});
+    }
+    const response = await fetch(path, options), data = await response.json();
+    if (!response.ok || !data.ok) throw Error(data.error || '无法读取设置');
+    return data;
+  } catch (error) {
+    if (error.name === 'AbortError') throw Error('未收到确认，请重新加载设置核对。');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function settingsAction(action) {
+  if (settingsBusy) return;
+  settingsBusy = true;
+  $('settings-fields').disabled = true;
+  $('settings-reload').disabled = true;
+  try { await action(); }
+  catch (error) { settingsMessage(error.message || '操作失败，请重新加载后重试。', true); }
+  finally {
+    settingsBusy = false;
+    $('settings-fields').disabled = !settingsToken;
+    $('settings-reload').disabled = false;
+  }
+}
+async function loadSettings() {
+  await settingsAction(async () => {
+    const data = await settingsRequest('/v1/settings');
+    showSettings(data);
+    settingsMessage(data.warning || '调整后点击“保存并应用”；自动刷新状态不会覆盖未保存的修改。', !!data.warning);
+  });
+}
+for (const id of [...brightnessFields, ...hourFields, 'serial_port', 'weather_city_code', 'claude_enabled']) {
+  $(id).addEventListener('input', () => {
+    if (brightnessFields.includes(id)) text(id + '-value', $(id).value + '%');
+    settingsMessage('有未保存的修改。');
+  });
+}
+$('settings-form').addEventListener('submit', event => {
+  event.preventDefault();
+  settingsAction(async () => {
+    const data = await settingsRequest('/v1/settings', {revision: settingsRevision, settings: settingsValues()});
+    showSettings(data);
+    settingsMessage('已保存。设置会随下一组数据发送；断线时将在重连后应用。');
+    refresh();
+  });
 });
-$('settings-form').addEventListener('submit',event=>{event.preventDefault();settingsAction(async()=>{
- const data=await settingsRequest('/v1/settings',{revision:settingsRevision,settings:settingsValues()});showSettings(data);settingsMessage('已保存。设置会随下一组数据发送；断线时将在重连后应用。');refresh();
-});});
-$('settings-reload').addEventListener('click',loadSettings);
-$('reconnect').addEventListener('click',()=>settingsAction(async()=>{
- await settingsRequest('/v1/reconnect',{});settingsMessage('已请求重新连接当前已保存的 USB 端口，通常需要两秒。');refresh();
+$('settings-reload').addEventListener('click', loadSettings);
+$('reconnect').addEventListener('click', () => settingsAction(async () => {
+  await settingsRequest('/v1/reconnect', {});
+  settingsMessage('已请求重新连接当前已保存的 USB 端口，通常需要两秒。');
+  refresh();
 }));
 loadSettings();
 </script>
