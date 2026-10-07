@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Control helper for the MiniDisplay Omarchy bar widget (stdlib only).
+
+  minidisplayctl status                 one-line JSON for the widget
+  minidisplayctl set <key> <value>      change a bridge setting (brightness, claude, ...)
+  minidisplayctl reconnect              ask the bridge to reopen the USB port
+  minidisplayctl start|stop|restart     control the systemd user service
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+PORT = int(os.environ.get("MINIDISPLAY_PORT", "8766"))
+BASE = f"http://127.0.0.1:{PORT}"
+SERVICE = "minidisplay-bridge.service"
+INT_KEYS = {"day_brightness", "night_brightness", "offline_brightness", "night_start_hour", "night_end_hour"}
+BOOL_KEYS = {"claude_enabled"}
+
+
+def request(path: str, body: dict | None = None, token: str | None = None) -> dict:
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(BASE + path, data=data, method="GET" if body is None else "POST")
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
+        req.add_header("X-MiniDisplay-Token", token or "")
+    try:
+        with urllib.request.urlopen(req, timeout=2) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        try:
+            message = json.load(exc).get("error")
+        except (ValueError, AttributeError):
+            message = None
+        raise RuntimeError(message or f"HTTP {exc.code}") from exc
+
+
+def service_state() -> str:
+    try:
+        result = subprocess.run(["systemctl", "--user", "is-active", SERVICE],
+                                capture_output=True, text=True, timeout=2)
+        state = result.stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if state == "inactive":
+        enabled = subprocess.run(["systemctl", "--user", "is-enabled", SERVICE],
+                                 capture_output=True, text=True, timeout=2).stdout.strip()
+        if enabled in {"", "not-found"}:
+            return "not-installed"
+    return state
+
+
+def status() -> dict:
+    result: dict = {"service": service_state(), "bridge": False}
+    try:
+        overview = request("/v1/overview")
+        settings = request("/v1/settings")
+    except (OSError, RuntimeError, ValueError) as exc:
+        result["error"] = str(getattr(exc, "reason", exc))
+        return result
+    result.update(bridge=True, version=overview.get("version"), desktop=overview.get("desktop") or {},
+                  usb=overview.get("usb") or {}, codex=overview.get("usage") or {},
+                  claude=overview.get("claude") or {}, settings=settings.get("settings") or {})
+    return result
+
+
+def set_setting(key: str, raw: str) -> None:
+    if key in INT_KEYS:
+        value: object = int(raw)
+    elif key in BOOL_KEYS:
+        value = raw.lower() in {"1", "true", "on", "yes"}
+    elif key == "serial_port":
+        value = None if raw in {"", "auto"} else raw
+    else:
+        raise RuntimeError(f"unknown setting: {key}")
+    current = request("/v1/settings")
+    settings = dict(current["settings"], **{key: value})
+    request("/v1/settings", {"revision": current["revision"], "settings": settings}, current["token"])
+
+
+def main(argv: list[str]) -> int:
+    command = argv[0] if argv else "status"
+    try:
+        if command == "status":
+            print(json.dumps(status(), separators=(",", ":")))
+        elif command == "set" and len(argv) == 3:
+            set_setting(argv[1], argv[2])
+        elif command == "reconnect":
+            request("/v1/reconnect", {}, request("/v1/settings")["token"])
+        elif command in {"start", "stop", "restart"}:
+            return subprocess.run(["systemctl", "--user", command, SERVICE]).returncode
+        else:
+            print(__doc__.strip(), file=sys.stderr)
+            return 2
+    except (OSError, RuntimeError, ValueError, KeyError) as exc:
+        print(str(getattr(exc, "reason", exc)), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

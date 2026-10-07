@@ -1,4 +1,4 @@
-# USB 系统状态屏桥接（macOS / Windows）
+# USB 系统状态屏桥接（macOS / Windows / Linux）
 
 这个后台只服务第二块 USB 系统状态屏：
 
@@ -8,13 +8,13 @@
 
 CPU、内存和网卡计数统一由 [psutil](https://github.com/giampaolo/psutil) 读取，串口统一由 [pyserial](https://github.com/pyserial/pyserial) 驱动。平台相关部分会自动选择：
 
-| 功能 | macOS | Windows |
-| --- | --- | --- |
-| 默认网卡 | 系统默认路由接口 | 系统路由探测，必要时回退到 `Get-NetRoute` |
-| 串口 | `/dev/cu.usbserial-*` 等 USB 串口 | `COM` 口及 USB VID/描述识别 |
-| CPU/GPU 温度 | App 内置只读 AppleSMC 读取器；不控制风扇、不要求管理员权限 | LibreHardwareMonitor 本机接口；兼容旧版 WMI 和 NVIDIA nvidia-smi |
-| 网络位置 | 通过公网出口 IP 显示国家/地区缩写 | 同 macOS |
-| Codex 用量 | 优先调用 ChatGPT/Codex 自带的本机 App Server | 优先调用 Codex 自带的本机 App Server |
+| 功能 | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| 默认网卡 | 系统默认路由接口 | 系统路由探测，必要时回退到 `Get-NetRoute` | `/proc/net/route` 最低 metric 默认路由，回退到路由探测 |
+| 串口 | `/dev/cu.usbserial-*` 等 USB 串口 | `COM` 口及 USB VID/描述识别 | `/dev/ttyUSB*`、`/dev/ttyACM*` 及 USB VID 识别 |
+| CPU/GPU 温度 | App 内置只读 AppleSMC 读取器；不控制风扇、不要求管理员权限 | LibreHardwareMonitor 本机接口；兼容旧版 WMI 和 NVIDIA nvidia-smi | 内核 hwmon（`coretemp`/`k10temp`/`zenpower`，`amdgpu`/`nouveau`/`xe`），NVIDIA 专有驱动回退 `nvidia-smi`；无需 root |
+| 网络位置 | 通过公网出口 IP 显示国家/地区缩写 | 同 macOS | 同 macOS |
+| Codex 用量 | 优先调用 ChatGPT/Codex 自带的本机 App Server | 优先调用 Codex 自带的本机 App Server | 调用 `PATH` 中的 `codex` App Server |
 
 ## macOS 安装与运行
 
@@ -135,6 +135,42 @@ py -3 -m venv .venv
 ```
 
 USB 状态屏不需要入站网络访问，建议使用 `--listen-host 127.0.0.1` 将 HTTP 诊断接口限制为本机。不要在路由器上映射 `8766`。
+
+## Linux 安装与运行
+
+适用于 systemd 发行版（Arch/Omarchy、Debian/Ubuntu、Fedora 等），需要 Python 3.10+。在仓库根目录执行：
+
+```bash
+tools/linux_bridge.sh install   # 创建 .venv、安装依赖、启用 systemd 用户服务（登录后自动运行）
+tools/linux_bridge.sh status    # 查看服务状态
+tools/linux_bridge.sh logs      # 跟踪日志（journalctl）
+tools/linux_bridge.sh restart | stop | start
+tools/linux_bridge.sh uninstall # 移除服务，保留 .venv 与设置
+tools/linux_bridge.sh run       # 不装服务，前台运行，Ctrl+C 停止
+tools/linux_bridge.sh ports     # 列出串口
+```
+
+Omarchy 用户运行 `install` 时会自动安装状态栏插件 `minidisplay.bridge`，也可以单独执行 `tools/linux_bridge.sh plugin`，详见 [`omarchy_plugin/README.md`](../../omarchy_plugin/README.md)。
+
+**串口权限**：CH340 显示为 `/dev/ttyUSB0`。普通用户需加入设备所属组（Arch 为 `uucp`，Debian/Ubuntu/Fedora 为 `dialout`），然后注销重新登录；脚本会检测并提示具体命令：
+
+```bash
+sudo usermod -aG uucp "$USER"     # Arch / Omarchy
+sudo usermod -aG dialout "$USER"  # Debian / Ubuntu / Fedora
+```
+
+如果 `brltty` 抢占了 CH340（Ubuntu 常见，`dmesg` 中出现 `brltty` 且端口立即消失），可执行 `sudo apt remove brltty`。
+
+服务只监听 `127.0.0.1:8766`，状态页仍为 [http://127.0.0.1:8766/](http://127.0.0.1:8766/)；设置保存在 `~/.config/SmallDesktopDisplay/settings.json`。安装时脚本会把 `codex`、`claude`、`nvidia-smi` 所在目录写入服务的 `PATH`（systemd 用户服务默认 `PATH` 很短，mise/nvm 安装的工具否则找不到）；之后若移动这些工具，重新执行 `install` 即可。多块 USB 串口并存时，编辑 `~/.config/systemd/user/minidisplay-bridge.service`，在 `ExecStart` 末尾加 `--serial-port /dev/ttyUSB0`，或在状态页设置中选择端口。
+
+Linux 上刷写状态屏固件：
+
+```bash
+pipx install platformio      # 或 pip install --user platformio
+pio run -d mac_status_display -e esp12e -t upload --upload-port /dev/ttyUSB0
+```
+
+刷写前先 `tools/linux_bridge.sh stop` 释放串口，完成后再 `start`。
 
 ## 配置
 
