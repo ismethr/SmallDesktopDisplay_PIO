@@ -95,6 +95,7 @@ WINDOWS_ROUTE_COMMAND = (
     "-ErrorAction SilentlyContinue | Where-Object State -EQ Alive | "
     "Sort-Object RouteMetric | Select-Object -First 1 -ExpandProperty InterfaceAlias",
 )
+LINUX_ROUTE_TABLE = Path("/proc/net/route")
 HOST_PLATFORM = platform.system() or sys.platform
 
 
@@ -252,6 +253,22 @@ def parse_windows_default_route_interface(output: str) -> str | None:
     return lines[0] if lines else None
 
 
+def parse_linux_default_route_interface(output: str) -> str | None:
+    """Pick the lowest-metric IPv4 default route from /proc/net/route."""
+    best: tuple[int, str] | None = None
+    for line in output.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) < 8 or fields[1] != "00000000" or fields[7] != "00000000":
+            continue
+        try:
+            flags, metric = int(fields[3], 16), int(fields[6])
+        except ValueError:
+            continue
+        if flags & 0x1 and (best is None or metric < best[0]):
+            best = (metric, fields[0])
+    return best[1] if best else None
+
+
 def parse_smc_temperature_output(output: str) -> dict[str, float]:
     """Parse the read-only `[SMC_KEY] value` format used by our helper and Stats."""
     values: dict[str, float] = {}
@@ -324,6 +341,10 @@ def read_hardware_temperatures(
     if platform_name == "win32":
         from windows_temperature import read_temperatures
         cpu, gpu, source, error = read_temperatures(timeout=max(timeout, 6.0))
+        return TemperatureSnapshot(cpu, gpu, source, int(time.time()), error)
+    if platform_name.startswith("linux"):
+        from linux_temperature import read_temperatures as read_linux_temperatures
+        cpu, gpu, source, error = read_linux_temperatures(timeout=timeout)
         return TemperatureSnapshot(cpu, gpu, source, int(time.time()), error)
     if platform_name != "darwin":
         return TemperatureSnapshot(error="temperature sensors are unavailable on this platform")
@@ -504,6 +525,12 @@ def default_route_interface(
             return routed
         command = WINDOWS_ROUTE_COMMAND
         parser = parse_windows_default_route_interface
+    elif platform_name.startswith("linux"):
+        try:
+            routed = parse_linux_default_route_interface(LINUX_ROUTE_TABLE.read_text())
+        except OSError:
+            routed = None
+        return routed if routed is not None else default_route_interface_from_socket()
     else:
         return None
 

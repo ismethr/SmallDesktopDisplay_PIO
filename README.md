@@ -5,13 +5,15 @@
 <h1 align="center">MiniDisplay</h1>
 
 <p align="center"><strong>把 CPU、温度、网速和 Codex 余量放到桌面上。</strong></p>
-<p align="center">ESP8266 · 240 × 240 ST7789 · USB-only · macOS / Windows</p>
+<p align="center">ESP8266 · 240 × 240 ST7789 · USB-only · macOS / Windows / Linux</p>
 
 MiniDisplay 是一块通过 USB 驱动的桌面系统状态小屏，沿用 ESP8266 NodeMCU 和 240 × 240 ST7789 硬件，不需要改变原项目的屏幕接线。电脑端的 **MiniDisplay Bridge（迷你屏桥接）** 在后台采集系统状态，再通过 USB 串口发送到屏幕；小屏本身不连接 Wi-Fi，也不保存电脑账号或 Codex 凭据。
 
 macOS 端提供 `x86_64` 与 `arm64` 两种原生构建，Windows 端提供 x64 构建。macOS 桥接常驻菜单栏，不占用 Dock；点击小屏图标即可打开状态与设置面板，并会自动发现常见的 CH340 USB 串口。
 
 Windows 1.12 新增安装包、系统托盘与可选登录自启，并附带 Windows 温度采集组件。新版 USB 状态屏断联 4 秒后自动显示原项目的完整天气、日期和动画时钟页，天气由电脑缓存，无需为小屏配置 Wi-Fi；重连恢复系统状态。需持续供电，断电后重新连接校时。详见 [Windows 安装与使用](tools/desktop_display_bridge/WINDOWS_QUICKSTART.md)。
+
+Linux 端以 systemd 用户服务运行：`tools/linux_bridge.sh install` 一条命令完成虚拟环境、依赖和开机自启，温度来自内核 hwmon（Intel/AMD CPU，AMD/Intel/NVIDIA GPU），无需 root。使用 [Omarchy](https://omarchy.org/) 时会同时安装状态栏插件 `minidisplay.bridge`：图标显示 USB 连接状态，左键打开面板查看指标、调节小屏亮度、启停服务和重连。详见 [Linux 安装与运行](tools/desktop_display_bridge/README.md#linux-安装与运行) 与 [Omarchy 插件说明](omarchy_plugin/README.md)。
 
 [下载 v1.12.0 安装包与固件](https://github.com/ismethr/SmallDesktopDisplay_PIO/releases/tag/v1.12.0) · [版本说明](.github/release-notes/v1.12.0.md)
 
@@ -41,6 +43,7 @@ ESP8266 NodeMCU → 240 × 240 ST7789 小屏
 
 1. 按原接线组装 NodeMCU 与 ST7789，并刷入 [`mac_status_display`](mac_status_display/README.md) 固件。
 2. 根据电脑架构安装 [MiniDisplay Bridge](tools/desktop_display_bridge/README.md)：x86 平台使用 `x86_64` 构建，ARM 平台使用 `arm64` 构建，Windows 使用 x64 EXE。
+   Linux 在仓库根目录执行 `tools/linux_bridge.sh install`，以 systemd 用户服务运行（见 [Linux 安装与运行](tools/desktop_display_bridge/README.md#linux-安装与运行)）。
 3. 接入 USB 后桥接程序会自动连接串口；屏幕断开或重新插入时无需重启电脑端程序。
 
 USB 帧只包含经过范围检查的系统指标、地区短标签和剩余百分比，不包含 OAuth 令牌、公网 IP、精确坐标或 Wi-Fi 密码。详细协议、诊断接口和构建方法见 [USB 状态屏说明](mac_status_display/README.md) 与 [桥接程序说明](tools/desktop_display_bridge/README.md)。

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "minidisplay.bridge",
+  "name": "MiniDisplay",
+  "version": "1.0.0",
+  "author": "SmallDesktopDisplay contributors",
+  "license": "AGPL-3.0",
+  "description": "Status and controls for the MiniDisplay USB system-status screen bridge.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Panel.qml" },
+  "barWidget": {
+    "displayName": "MiniDisplay",
+    "description": "USB status screen connection, live metrics, brightness and bridge service controls.",
+    "category": "System",
+    "aliases": ["minidisplay", "smalldesktopdisplay", "usb-display"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": { "pollSeconds": 3 },
+    "schema": [
+      { "key": "pollSeconds", "type": "integer", "label": "Refresh interval (s)", "min": 1, "max": 60, "step": 1, "defaultValue": 3 }
+    ]
+  }
+}
