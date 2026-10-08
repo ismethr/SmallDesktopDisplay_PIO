@@ -43,8 +43,17 @@ void sendStatus(MiniDisplayApp &app, const StatusFrame &frame, uint32_t now) {
   send(app, payload, now);
 }
 
+void sendQuota(MiniDisplayApp &app, const char *tag, int fiveHour, int week, bool stale, uint32_t now) {
+  send(app, std::string(tag) + "," + std::to_string(fiveHour) + "," + std::to_string(week) + "," +
+                (stale ? "1" : "0"), now);
+}
+
 void sendClaude(MiniDisplayApp &app, int fiveHour, int week, bool stale, uint32_t now) {
-  send(app, "MSA1," + std::to_string(fiveHour) + "," + std::to_string(week) + "," + (stale ? "1" : "0"), now);
+  sendQuota(app, "MSA1", fiveHour, week, stale, now);
+}
+
+void sendCodex(MiniDisplayApp &app, int fiveHour, int week, bool stale, uint32_t now) {
+  sendQuota(app, "MSA2", fiveHour, week, stale, now);
 }
 
 void save(const TFT_eSPI &display, const char *name) { display.save(directory + "/" + name + ".ppm"); }
@@ -88,15 +97,22 @@ void renderLiveStates() {
   StatusFrame frame = typicalFrame();
   send(app, "MSC2,1790800747", 1000);  // 2026-09-30 20:39:07 local
   send(app, "MSC1,74347", 1000);
-  sendClaude(app, 730, 420, false, 1000);
   sendStatus(app, frame, 1000);
   app.tick(1000);
+  // A bridge without MSA2 still fills the Codex weekly row from MSD4.
+  save(display, "codex-weekly-only");
+  require(app.codexUsage().fiveHourTenths == -1 && app.codexUsage().weekTenths == 170,
+          "MSD4 supplies only the Codex weekly window");
+  sendCodex(app, 580, 170, false, 1000);
+  sendClaude(app, 730, 420, false, 1000);
   save(display, "live");
   require(!app.offline() && app.brightness() == 50, "!app.offline() && app.brightness() == 50");
+  require(app.codexUsage().fiveHourTenths == 580, "MSA2 supplies the Codex 5-hour window");
 
   // Identical data and a clock inside the same minute must not touch the panel.
   size_t before = display.writes;
   sendStatus(app, frame, 2000);
+  sendCodex(app, 580, 170, false, 2000);
   sendClaude(app, 730, 420, false, 2000);
   app.tick(2000);
   require(display.writes == before, "display.writes == before");
@@ -115,6 +131,7 @@ void renderLiveStates() {
   frame.codexRemainingTenths = 1000;
   strcpy(frame.networkLocation, "US-WWW");
   sendStatus(app, frame, 55000);
+  sendCodex(app, 1000, 1000, false, 55000);
   sendClaude(app, 1000, 1000, false, 55000);
   save(display, "maximum");
 
@@ -124,12 +141,14 @@ void renderLiveStates() {
   frame.codexRemainingTenths = 84;
   strcpy(frame.networkLocation, "JP-13");
   sendStatus(app, frame, 56000);
+  sendCodex(app, 40, 84, false, 56000);
   sendClaude(app, 255, 60, false, 56000);
   save(display, "low-quota");
 
   frame.codexUsageStale = true;
   frame.networkLocationStale = true;
   sendStatus(app, frame, 57000);
+  sendCodex(app, 40, 84, true, 57000);
   sendClaude(app, 255, 60, true, 57000);
   save(display, "cached");
 
@@ -137,6 +156,7 @@ void renderLiveStates() {
   frame.codexRemainingTenths = macstatus::kMissingCodexUsage;
   strcpy(frame.networkLocation, "--");
   sendStatus(app, frame, 58000);
+  sendCodex(app, -1, -1, true, 58000);
   sendClaude(app, -1, -1, true, 58000);
   save(display, "missing");
 }
@@ -173,10 +193,16 @@ void renderOfflineStates() {
   app.tick(10001);
   require(app.offline(), "app.offline()");
 
-  // Claude values expire 15 s after the last MSA1 frame even while live.
+  sendCodex(app, 300, 600, false, 8000);
+  require(app.codexUsage().fiveHourTenths == 300, "MSA2 is accepted while offline");
+
+  // Quota values expire 15 s after their last MSA1/MSA2 frame even while live;
+  // Codex then falls back to MSD4's weekly value.
   sendStatus(app, frame, 24000);
   app.tick(24000);
   require(!app.offline() && app.claudeUsage().fiveHourTenths == -1, "!app.offline() && app.claudeUsage().fiveHourTenths == -1");
+  require(app.codexUsage().fiveHourTenths == -1 && app.codexUsage().weekTenths == frame.codexRemainingTenths,
+          "expired MSA2 falls back to the MSD4 weekly value");
 
   // Timers keep working over the uint32_t millis() wrap.
   sendStatus(app, frame, UINT32_MAX - 1000);
@@ -202,6 +228,6 @@ int main(int argc, char **argv) {
     std::cerr << "status preview failed: " << error.what() << "\n";
     return 1;
   }
-  std::cout << "10 real-code previews; bounds, overlap, clock, reconnect and timer checks passed\n";
+  std::cout << "11 real-code previews; bounds, overlap, clock, reconnect and timer checks passed\n";
   return 0;
 }

@@ -21,18 +21,26 @@ void MiniDisplayApp::handleLine(char *line, uint32_t now) {
   if (macstatus::validAuxFrame(line, "$MSQ1*")) {
     Serial.printf(
         "MSQ1 offline=%u clock=%u date=%u weather=%u epoch=%u heap=%u claude5=%d claude7=%d "
-        "claude_stale=%u\n",
+        "claude_stale=%u codex5=%d codex7=%d codex_stale=%u\n",
         offline_, clock_.valid(), clock_.dateValid(), offlinePage_.hasWeather(), clock_.epoch(),
-        ESP.getFreeHeap(), claude_.fiveHourTenths, claude_.weekTenths, claude_.stale);
+        ESP.getFreeHeap(), claude_.fiveHourTenths, claude_.weekTenths, claude_.stale,
+        codexUsage().fiveHourTenths, codexUsage().weekTenths, codexUsage().stale);
     return;
   }
 #endif
-  macstatus::ClaudeUsageFrame claude;
-  if (macstatus::parseClaudeUsageFrame(line, claude)) {
-    claude_ = claude;
+  macstatus::QuotaFrame quota;
+  if (macstatus::parseClaudeUsageFrame(line, quota)) {
+    claude_ = quota;
     hasClaude_ = true;
     lastClaudeAt_ = now;
     if (!offline_) status_.showClaude(claude_);
+    return;
+  }
+  if (macstatus::parseCodexUsageFrame(line, quota)) {
+    codex_ = quota;
+    hasCodex_ = true;
+    lastCodexAt_ = now;
+    if (!offline_) status_.showCodex(codexUsage());
     return;
   }
   uint32_t clockValue = 0;
@@ -56,7 +64,17 @@ void MiniDisplayApp::handleLine(char *line, uint32_t now) {
   showStatus(frame);
 }
 
+macstatus::QuotaFrame MiniDisplayApp::codexUsage() const {
+  if (hasCodex_) return codex_;
+  macstatus::QuotaFrame weekly;
+  weekly.weekTenths = statusCodexWeekTenths_;
+  weekly.stale = statusCodexStale_;
+  return weekly;
+}
+
 void MiniDisplayApp::showStatus(const macstatus::StatusFrame &frame) {
+  statusCodexWeekTenths_ = frame.codexRemainingTenths;
+  statusCodexStale_ = frame.codexUsageStale;
   offlineBrightness_ = frame.offlineBrightnessPercent;
   applyBrightness(frame.brightnessPercent);
   if (offline_) {
@@ -64,16 +82,22 @@ void MiniDisplayApp::showStatus(const macstatus::StatusFrame &frame) {
     offline_ = false;
   }
   status_.showFrame(frame);
+  status_.showCodex(codexUsage());
   status_.showClaude(claude_);
   status_.showClock(clock_);
 }
 
 void MiniDisplayApp::tick(uint32_t now) {
   clock_.tick(now);
-  if (hasClaude_ && now - lastClaudeAt_ > kClaudeExpiryMs) {
+  if (hasClaude_ && now - lastClaudeAt_ > kQuotaExpiryMs) {
     hasClaude_ = false;
-    claude_ = macstatus::ClaudeUsageFrame();
+    claude_ = macstatus::QuotaFrame();
     if (!offline_) status_.showClaude(claude_);
+  }
+  if (hasCodex_ && now - lastCodexAt_ > kQuotaExpiryMs) {
+    hasCodex_ = false;
+    codex_ = macstatus::QuotaFrame();
+    if (!offline_) status_.showCodex(codexUsage());
   }
   if (now - lastStatusAt_ <= kOfflineAfterMs) {
     if (!offline_) status_.showClock(clock_);

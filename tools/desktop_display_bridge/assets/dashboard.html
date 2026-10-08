@@ -184,13 +184,14 @@ footer { display: flex; justify-content: space-between; gap: 16px; margin-top: 2
 
   <div class="section-head"><h2>AI 账户余量</h2><span>独立刷新 · 小屏同步显示</span></div>
   <div class="grid two">
-    <section class="card quota codex" aria-label="Codex 本周余量">
-      <div class="card-head"><h3>CODEX <span>本周余量</span></h3><span class="badge cached" id="usage-badge">等待数据</span></div>
-      <div class="value"><span id="usage">--</span><span class="unit">%</span></div>
-      <div class="bar" id="usage-bar"><span></span></div>
-      <p class="caption" id="usage-reset">下次重置 --</p>
-      <div class="secondary"><span>距离重置<small id="usage-updated">--</small></span><b id="usage-countdown">--</b></div>
-      <div class="notes"><p id="usage-detail">读取当前登录账号的周限额。</p></div>
+    <section class="card quota codex" aria-label="Codex 额度">
+      <div class="card-head"><h3>CODEX <span>5 小时余量</span></h3><span class="badge cached" id="usage-badge">等待数据</span></div>
+      <div class="value"><span id="codex-five">--</span><span class="unit">%</span></div>
+      <div class="bar" id="codex-five-bar"><span></span></div>
+      <p class="caption" id="codex-five-reset">等待账户数据</p>
+      <div class="secondary"><span>每周余量<small id="usage-reset">--</small></span><b><span id="usage">--</span>%</b></div>
+      <div class="bar thin" id="usage-bar"><span></span></div>
+      <div class="notes"><p id="usage-detail">读取当前登录账号的 5 小时与每周限额。</p></div>
     </section>
     <section class="card quota claude" aria-label="Claude 额度">
       <div class="card-head"><h3>CLAUDE <span>5 小时余量</span></h3><span class="badge cached" id="claude-badge">未连接</span></div>
@@ -306,6 +307,7 @@ const claudeErrors = {
   missing_scope: '当前登录缺少额度读取权限，请使用 Claude Code 的账号登录。',
   login_required: '未找到可用登录。请先在 Claude Code 登录与桌面/网页版相同的账号。',
   login_expired: 'Claude 登录已过期，请在 Claude Code 重新登录；连接程序会自动重试。',
+  keychain_denied: '未获准读取钥匙串中的 Claude Code 登录。请关闭后重新开启下方的 Claude 额度连接，并在系统弹窗中选择“始终允许”。',
   access_denied: '当前登录无法访问订阅额度，请核对 Claude 账号和套餐。',
   rate_limited: 'Claude 暂时限制查询频率，稍后自动重试。',
   network_error: '暂时无法连接 Claude，稍后自动重试。',
@@ -318,14 +320,16 @@ const usbTitles = {waiting: '等待 USB 小屏', connecting: '正在建立 USB �
 const usbExplanations = {waiting: '请连接 USB 数据线，程序会自动识别状态屏。', connecting: '正在等待设备就绪，通常需要两秒。', retrying: 'USB 可能已断开或被其他程序占用，正在自动重试。', 'waiting-data': '系统采集暂不可用，正在重新采集。', disabled: '当前只读取电脑状态，没有向 USB 小屏发送数据。', stopped: '请重新打开 MiniDisplay Bridge。'};
 
 function renderCodex(u) {
+  const five = u.ok ? u.session : null;
+  text('codex-five', percent(five?.remaining_percent));
   text('usage', u.ok ? percent(u.remaining_percent) : '--');
   text('usage-badge', u.ok ? (u.stale ? '上次数据' : '已同步') : '等待数据');
   $('usage-badge').classList.toggle('cached', !u.ok || u.stale);
+  setBar('codex-five-bar', five?.remaining_percent, {stale: !!u.stale});
   setBar('usage-bar', u.ok ? u.remaining_percent : null, {stale: !!u.stale});
-  text('usage-reset', u.ok && u.reset_at ? '下次重置 ' + moment(u.reset_at) : '下次重置 --');
-  text('usage-countdown', u.ok ? countdown(u.reset_at) : '--');
-  text('usage-updated', u.ok ? '更新于 ' + moment(u.fetched_at) : '--');
-  text('usage-detail', u.ok ? (u.stale ? '更新暂不可用，保留上次余量。' : '周限额已同步，小屏同时显示。') : '暂未取得余量，请确认 Codex 已登录且网络可用。');
+  text('codex-five-reset', five ? (five.reset_at ? '下次重置 ' + moment(five.reset_at) + ' · 剩 ' + countdown(five.reset_at) : '当前时段尚未开始') : u.ok ? '当前套餐没有 5 小时窗口' : '5 小时窗口暂无数据');
+  text('usage-reset', u.ok && u.reset_at ? '重置于 ' + moment(u.reset_at) : '--');
+  text('usage-detail', (u.ok ? (u.stale ? '更新暂不可用，保留上次余量。' : '限额已同步，小屏同时显示。') : '暂未取得余量，请确认 Codex 已登录且网络可用。') + (u.ok && u.fetched_at ? '更新于 ' + moment(u.fetched_at) : ''));
 }
 
 function renderClaude(c) {
@@ -394,9 +398,9 @@ async function refresh() {
     text('updated', '页面同步于 ' + new Date().toLocaleTimeString('zh-CN'));
     lastSuccess = Date.now();
   } catch {
-    for (const id of ['usage', 'claude-five', 'claude-week']) text(id, '--');
+    for (const id of ['codex-five', 'usage', 'claude-five', 'claude-week']) text(id, '--');
     for (const id of ['usage-badge', 'claude-badge']) { text(id, '连接中断'); $(id).classList.add('cached'); }
-    for (const id of ['usage-bar', 'claude-bar', 'claude-week-bar']) setBar(id, null);
+    for (const id of ['codex-five-bar', 'usage-bar', 'claude-bar', 'claude-week-bar']) setBar(id, null);
     $('connection').classList.add('warn');
     text('connection-title', '暂时联系不上桥接程序');
     text('connection-detail', '请打开 MiniDisplay Bridge；恢复后此页面会自动重新同步。');

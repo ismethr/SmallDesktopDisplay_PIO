@@ -86,8 +86,19 @@ class UsageSnapshot:
     fetched_at: int | None = None
     stale: bool = False
     error: str | None = "waiting for first refresh"
+    # Short (normally 5-hour) session window; the fields above are weekly.
+    session_remaining_percent: int | None = None
+    session_reset_at: int | None = None
+    session_window_seconds: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
+        session = None
+        if self.session_remaining_percent is not None:
+            session = {
+                "remaining_percent": self.session_remaining_percent,
+                "reset_at": self.session_reset_at,
+                "window_seconds": self.session_window_seconds,
+            }
         return {
             "schema": 1,
             "ok": self.valid,
@@ -96,6 +107,7 @@ class UsageSnapshot:
             "reset_at": self.reset_at,
             "reset_minutes": self.reset_minutes,
             "window_seconds": self.window_seconds,
+            "session": session,
             "fetched_at": self.fetched_at,
             "stale": self.stale,
             "error": self.error,
@@ -240,6 +252,21 @@ def parse_usage_response(payload: Mapping[str, Any], now: float | None = None) -
         reset_at = max(0, int(_number(selected["reset_at"], "reset_at")))
         reset_minutes = max(0, int((reset_at - now) / 60))
 
+    # Session window: the short (sub-two-day) window closest to five hours,
+    # never the one already reported as weekly.
+    session_windows = [
+        item for item in windows if item[0] < 2 * 86400 and item[1] is not selected
+    ]
+    session_remaining: int | None = None
+    session_reset_at: int | None = None
+    session_seconds: int | None = None
+    if session_windows:
+        session_seconds, session = min(session_windows, key=lambda item: abs(item[0] - 5 * 3600))
+        session_used = int(round(_number(session.get("used_percent"), "used_percent")))
+        session_remaining = 100 - max(0, min(100, session_used))
+        if session.get("reset_at") is not None:
+            session_reset_at = max(0, int(_number(session["reset_at"], "reset_at")))
+
     return UsageSnapshot(
         valid=True,
         used_percent=used,
@@ -250,6 +277,9 @@ def parse_usage_response(payload: Mapping[str, Any], now: float | None = None) -
         fetched_at=int(now),
         stale=False,
         error=None,
+        session_remaining_percent=session_remaining,
+        session_reset_at=session_reset_at,
+        session_window_seconds=session_seconds,
     )
 
 

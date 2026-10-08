@@ -61,6 +61,14 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(0, snapshot.remaining_percent)
         self.assertEqual(604_800, snapshot.window_seconds)
         self.assertEqual(120, snapshot.reset_minutes)
+        # The 5-hour primary window is reported alongside the weekly one.
+        self.assertEqual(88, snapshot.session_remaining_percent)
+        self.assertEqual(2_000, snapshot.session_reset_at)
+        self.assertEqual(18_000, snapshot.session_window_seconds)
+        self.assertEqual(
+            {"remaining_percent": 88, "reset_at": 2_000, "window_seconds": 18_000},
+            snapshot.as_dict()["session"],
+        )
 
     def test_parse_usage_accepts_weekly_only_primary_shape(self) -> None:
         snapshot = bridge.parse_usage_response(
@@ -79,6 +87,9 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(31, snapshot.used_percent)
         self.assertEqual(69, snapshot.remaining_percent)
         self.assertEqual(60, snapshot.reset_minutes)
+        # A plan without a short window has no session, not a copy of weekly.
+        self.assertIsNone(snapshot.session_remaining_percent)
+        self.assertIsNone(snapshot.as_dict()["session"])
 
     def test_parse_usage_array_prefers_weekly_over_monthly(self) -> None:
         snapshot = bridge.parse_usage_response(
@@ -103,6 +114,8 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(28, snapshot.used_percent)
         self.assertEqual(72, snapshot.remaining_percent)
         self.assertEqual(7 * 86400, snapshot.window_seconds)
+        self.assertEqual(91, snapshot.session_remaining_percent)
+        self.assertEqual(5 * 3600, snapshot.session_window_seconds)
 
     def test_parse_official_app_server_rate_limits_prefers_weekly_window(self) -> None:
         snapshot = bridge.parse_app_server_rate_limits(

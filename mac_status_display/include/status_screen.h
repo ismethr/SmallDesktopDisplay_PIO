@@ -19,8 +19,10 @@ class StatusScreen {
   // WAITING indicator. The next show*() calls repaint every field.
   void drawLayout();
 
+  // System metrics and network; the quota cards have their own show*() calls.
   void showFrame(const macstatus::StatusFrame &frame);
-  void showClaude(const macstatus::ClaudeUsageFrame &usage);
+  void showCodex(const macstatus::QuotaFrame &usage);
+  void showClaude(const macstatus::QuotaFrame &usage);
   // Header shows local time and date once the bridge has synchronised them.
   void showClock(const macstatus::OfflineClock &clock);
 
@@ -29,10 +31,10 @@ class StatusScreen {
   void drawConnection(bool live);
   void drawLoad(int16_t x, const char *label, int16_t tenths);
   void drawTemperature(int16_t x, const char *label, int16_t tenths);
-  void drawUsageCard(int16_t x, const char *label, int16_t remainingTenths, bool stale,
+  void drawQuotaCard(int16_t x, const char *label, const macstatus::QuotaFrame &usage,
                      uint16_t accent);
-  void drawCodex(int16_t remainingTenths, bool stale);
-  void drawClaude(const macstatus::ClaudeUsageFrame &usage);
+  void drawQuotaRow(int16_t x, int16_t y, const char *label, int16_t remainingTenths, bool stale,
+                    uint16_t accent);
   void drawLocation(const char *location, bool stale);
   void drawRates(bool valid, uint32_t download, uint32_t upload);
   void drawProgressBar(int16_t x, int16_t y, int16_t width, int16_t height, int16_t tenths,
@@ -44,8 +46,10 @@ class StatusScreen {
   TFT_eSPI &tft_;
   bool hasFrame_ = false;
   macstatus::StatusFrame shown_;
+  bool codexDrawn_ = false;
+  macstatus::QuotaFrame codex_;
   bool claudeDrawn_ = false;
-  macstatus::ClaudeUsageFrame claude_;
+  macstatus::QuotaFrame claude_;
   uint32_t headerMinute_ = kNoMinute;
   bool headerDate_ = false;
 };

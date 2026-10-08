@@ -36,11 +36,14 @@ constexpr int16_t kUsageCardWidth = 108;
 constexpr int16_t kUsageCardHeight = 66;
 constexpr int16_t kCodexCardX = 8;
 constexpr int16_t kClaudeCardX = 124;
-constexpr int16_t kUsageLabelY = 128;
-constexpr int16_t kUsageValueY = 139;
-constexpr int16_t kUsageBarY = 162;
-constexpr int16_t kUsageBarHeight = 6;
-constexpr int16_t kUsageDetailY = 173;
+constexpr int16_t kUsageLabelY = 127;
+// Two rows per card: 5-hour window, then weekly window. Each row is a small
+// label, a right-aligned percentage and a full-width bar underneath.
+constexpr int16_t kFiveHourRowY = 136;
+constexpr int16_t kWeekRowY = 159;
+constexpr int16_t kQuotaValueHeight = 16;  // font 2
+constexpr int16_t kUsageBarHeight = 5;
+constexpr int16_t kUsageInnerWidth = 92;
 
 constexpr Rect kNetworkCard = {8, 193, 224, 39};
 constexpr int16_t kNetworkLabelY = 198;
@@ -87,9 +90,11 @@ void StatusScreen::drawLayout() {
 
   frame(tft_, Rect{kCodexCardX, kUsageCardY, kUsageCardWidth, kUsageCardHeight});
   frame(tft_, Rect{kClaudeCardX, kUsageCardY, kUsageCardWidth, kUsageCardHeight});
-  drawCodex(macstatus::kMissingCodexUsage, false);
-  claude_ = macstatus::ClaudeUsageFrame();
-  drawClaude(claude_);
+  codex_ = macstatus::QuotaFrame();
+  drawQuotaCard(kCodexCardX, "CODEX", codex_, kCodex);
+  codexDrawn_ = true;
+  claude_ = macstatus::QuotaFrame();
+  drawQuotaCard(kClaudeCardX, "CLAUDE", claude_, kClaude);
   claudeDrawn_ = true;
 
   frame(tft_, kNetworkCard);
@@ -115,9 +120,6 @@ void StatusScreen::showFrame(const macstatus::StatusFrame &frame) {
     drawTemperature(kCpuX, "CPU", frame.cpuTemperatureTenths);
   if (all || frame.gpuTemperatureTenths != shown_.gpuTemperatureTenths)
     drawTemperature(kMemoryX, "GPU", frame.gpuTemperatureTenths);
-  if (all || frame.codexRemainingTenths != shown_.codexRemainingTenths ||
-      frame.codexUsageStale != shown_.codexUsageStale)
-    drawCodex(frame.codexRemainingTenths, frame.codexUsageStale);
   if (all || strcmp(frame.networkLocation, shown_.networkLocation) != 0 ||
       frame.networkLocationStale != shown_.networkLocationStale)
     drawLocation(frame.networkLocation, frame.networkLocationStale);
@@ -128,9 +130,16 @@ void StatusScreen::showFrame(const macstatus::StatusFrame &frame) {
   hasFrame_ = true;
 }
 
-void StatusScreen::showClaude(const macstatus::ClaudeUsageFrame &usage) {
+void StatusScreen::showCodex(const macstatus::QuotaFrame &usage) {
+  if (codexDrawn_ && usage == codex_) return;
+  drawQuotaCard(kCodexCardX, "CODEX", usage, kCodex);
+  codex_ = usage;
+  codexDrawn_ = true;
+}
+
+void StatusScreen::showClaude(const macstatus::QuotaFrame &usage) {
   if (claudeDrawn_ && usage == claude_) return;
-  drawClaude(usage);
+  drawQuotaCard(kClaudeCardX, "CLAUDE", usage, kClaude);
   claude_ = usage;
   claudeDrawn_ = true;
 }
@@ -207,46 +216,36 @@ void StatusScreen::drawTemperature(int16_t x, const char *label, int16_t tenths)
   tft_.drawString(value, x + kColumnWidth, kTemperatureMidY);
 }
 
-void StatusScreen::drawUsageCard(int16_t x, const char *label, int16_t remainingTenths,
-                                 bool stale, uint16_t accent) {
+void StatusScreen::drawQuotaCard(int16_t x, const char *label,
+                                 const macstatus::QuotaFrame &usage, uint16_t accent) {
+  const bool valid = usage.fiveHourTenths >= 0 || usage.weekTenths >= 0;
+  tft_.fillRect(x + 6, kUsageLabelY - 2, 96, 12, kBackground);
+  setText(kFontSmall, TL_DATUM, accent);
+  tft_.drawString(label, x + 8, kUsageLabelY);
+  // Freshness marker: accent when live, yellow when cached, grey when missing.
+  tft_.fillCircle(x + 98, kUsageLabelY + 3, 2,
+                  valid ? (usage.stale ? kYellow : accent) : kPanelBorder);
+  drawQuotaRow(x, kFiveHourRowY, "5H", usage.fiveHourTenths, usage.stale, accent);
+  drawQuotaRow(x, kWeekRowY, "WEEK", usage.weekTenths, usage.stale, accent);
+}
+
+void StatusScreen::drawQuotaRow(int16_t x, int16_t y, const char *label, int16_t remainingTenths,
+                                bool stale, uint16_t accent) {
   const bool valid = remainingTenths >= 0;
   const int16_t left = x + 8;
-  tft_.fillRect(x + 6, 125, 96, 58, kBackground);
-  setText(kFontSmall, TL_DATUM, accent);
-  tft_.drawString(label, left, kUsageLabelY);
-  // Freshness marker: accent when live, yellow when cached, grey when missing.
-  tft_.fillCircle(x + 96, kUsageLabelY + 3, 2, valid ? (stale ? kYellow : accent) : kPanelBorder);
-
+  const int16_t right = left + kUsageInnerWidth;
+  const int16_t valueMidY = y + kQuotaValueHeight / 2;
+  tft_.fillRect(x + 6, y, 96, kQuotaValueHeight + 2 + kUsageBarHeight, kBackground);
+  setText(kFontSmall, ML_DATUM, kMuted);
+  tft_.drawString(label, left, valueMidY);
   char value[8];
   formatPercent(remainingTenths, value, sizeof(value));
-  setText(kFontValue, TL_DATUM, valid && !stale ? kText : kMuted);
-  tft_.drawString(value, left, kUsageValueY);
-  const uint16_t barColor = !valid ? kMuted : stale ? kMuted : quotaColor(remainingTenths, accent);
-  drawProgressBar(left, kUsageBarY, 92, kUsageBarHeight, remainingTenths, barColor);
-}
-
-void StatusScreen::drawCodex(int16_t remainingTenths, bool stale) {
-  drawUsageCard(kCodexCardX, "CODEX", remainingTenths, stale, kCodex);
-  setText(kFontSmall, TL_DATUM, kMuted);
-  const char *detail = remainingTenths < 0 ? "WEEK --" : stale ? "WEEK CACHED" : "WEEK LEFT";
-  tft_.drawString(detail, kCodexCardX + 8, kUsageDetailY);
-}
-
-void StatusScreen::drawClaude(const macstatus::ClaudeUsageFrame &usage) {
-  drawUsageCard(kClaudeCardX, "CLAUDE 5H", usage.fiveHourTenths, usage.stale, kClaude);
-  // Weekly window: "7D 42% LEFT", the percentage colored like the 5-hour bar.
-  int16_t x = kClaudeCardX + 8;
-  setText(kFontSmall, TL_DATUM, kMuted);
-  x += tft_.drawString("7D ", x, kUsageDetailY);
-  char value[8];
-  formatPercent(usage.weekTenths, value, sizeof(value));
-  const bool valid = usage.weekTenths >= 0;
-  setText(kFontSmall, TL_DATUM,
-          valid && !usage.stale ? quotaColor(usage.weekTenths, kText) : kMuted);
-  x += tft_.drawString(value, x, kUsageDetailY);
-  if (!valid) return;
-  setText(kFontSmall, TL_DATUM, kMuted);
-  tft_.drawString(usage.stale ? " OLD" : " LEFT", x, kUsageDetailY);
+  const uint16_t live = valid ? quotaColor(remainingTenths, kText) : kMuted;
+  setText(kFontLabel, MR_DATUM, valid && !stale ? live : kMuted);
+  tft_.drawString(value, right, valueMidY);
+  const uint16_t barColor = !valid || stale ? kMuted : quotaColor(remainingTenths, accent);
+  drawProgressBar(left, y + kQuotaValueHeight + 1, kUsageInnerWidth, kUsageBarHeight,
+                  remainingTenths, barColor);
 }
 
 void StatusScreen::drawLocation(const char *location, bool stale) {

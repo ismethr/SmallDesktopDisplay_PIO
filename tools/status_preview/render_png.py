@@ -8,11 +8,11 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 ORDER = (
-    "waiting", "live", "low-quota", "cached", "missing", "maximum",
+    "waiting", "codex-weekly-only", "live", "low-quota", "cached", "missing", "maximum",
     "offline-unsynced", "offline", "midnight", "reconnected",
 )
 SCALE = 2
-COLUMNS = 5
+COLUMNS = 4
 LABEL_HEIGHT = 22
 
 
