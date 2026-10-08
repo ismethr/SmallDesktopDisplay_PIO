@@ -41,6 +41,25 @@ void test_claude_aux_frame_validation() {
   TEST_ASSERT_TRUE(frame.stale);
 }
 
+void test_codex_aux_frame_shares_validation_but_not_tag() {
+  macstatus::QuotaFrame frame;
+  char line[80];
+  buildFrame("MSA2,580,170,0", line, sizeof(line));
+  TEST_ASSERT_TRUE(macstatus::parseCodexUsageFrame(line, frame));
+  TEST_ASSERT_EQUAL_INT16(580, frame.fiveHourTenths);
+  TEST_ASSERT_EQUAL_INT16(170, frame.weekTenths);
+  TEST_ASSERT_FALSE(frame.stale);
+  // Each tag belongs to one provider.
+  TEST_ASSERT_FALSE(macstatus::parseClaudeUsageFrame(line, frame));
+  buildFrame("MSA1,580,170,0", line, sizeof(line));
+  TEST_ASSERT_FALSE(macstatus::parseCodexUsageFrame(line, frame));
+  const char *bad[] = {"MSA2,1001,2,0", "MSA2,1,2", "MSA2,1,2,0,0", "MSA2,-2,2,0", "MSA20,1,2,0"};
+  for (const char *payload : bad) {
+    buildFrame(payload, line, sizeof(line));
+    TEST_ASSERT_FALSE(macstatus::parseCodexUsageFrame(line, frame));
+  }
+}
+
 void test_crc_standard_vector() {
   const char *value = "123456789";
   TEST_ASSERT_EQUAL_HEX16(
@@ -265,6 +284,7 @@ int main(int, char **) {
   RUN_TEST(test_status_formatting);
   RUN_TEST(test_crc_standard_vector);
   RUN_TEST(test_claude_aux_frame_validation);
+  RUN_TEST(test_codex_aux_frame_shares_validation_but_not_tag);
   RUN_TEST(test_clock_crc_bounds_and_no_output_mutation);
   RUN_TEST(test_offline_clock_midnight_wrap_and_resync);
   RUN_TEST(test_calendar_bounds_and_date_rollover);

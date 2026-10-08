@@ -2,7 +2,7 @@
 
 这个后台只服务第二块 USB 系统状态屏：
 
-- 状态屏不使用 Wi-Fi，后台每秒通过 USB 串口发送 CPU、内存、CPU/GPU 温度、网络出口位置、Codex 周剩余用量、下载和上传速度。
+- 状态屏不使用 Wi-Fi，后台每秒通过 USB 串口发送 CPU、内存、CPU/GPU 温度、网络出口位置、Codex 5 小时与每周剩余用量、下载和上传速度。
 - Codex 登录或网络请求失败时，CPU、内存和网速仍会更新，用量卡片会保留旧值并显示为陈旧；串口重新插入后会自动连接。
 - 第一块天气时钟不运行此桥接，也不访问电脑。
 
@@ -249,7 +249,7 @@ $MSD4,<序号>,<CPU×10>,<内存×10>,<CPU温度×10>,<GPU温度×10>,<Codex剩�
 
 ## Claude 账户余量（1.13.0）
 
-面板与 USB 小屏同时显示 Claude 的 5 小时和每周**剩余**比例，保留 Codex 周余量。
+面板与 USB 小屏同时显示 Claude 的 5 小时和每周**剩余**比例；Codex 同样显示 5 小时和每周余量。
 在“显示屏设置”开启“连接 Claude 账户额度”，默认关闭。桌面/网页用户需在本机
 Claude Code 登录同一 Claude 账号；首次需要登录时使用官方 `claude auth login`。
 无需发消息或购买 API 额度。Bridge 不提供、记录或上传登录令牌。
@@ -258,6 +258,11 @@ Claude Code 登录同一 Claude 账号；首次需要登录时使用官方 `clau
 
 - 使用当前 `CLAUDE_CONFIG_DIR/.credentials.json`，否则 `~/.claude/.credentials.json`，
   要求 `user:profile` 权限；不跨配置目录挑选账号，不读取浏览器 Cookie。
+- macOS 上 Claude Code 默认把登录保存在钥匙串。未设置 `CLAUDE_CONFIG_DIR` 且凭据文件
+  缺失或已过期时，通过系统 `/usr/bin/security` 只读读取 Claude Code 自己的
+  `Claude Code-credentials` 项目。系统询问时选择“始终允许”。拒绝或 30 秒未响应后不再
+  自动询问，关闭再开启“连接 Claude 账户额度”才会重试。未过期的令牌只保存在内存中，
+  到期、认证失败或关闭开关时丢弃。
 - 请求 `https://api.anthropic.com/api/oauth/usage`，保留所需 OAuth beta 请求头。
   `five_hour` 与 `seven_day` 各自独立处理；缺失窗口显示 `--`，不会把花费或上下文余量当成订阅额度。
 - 每 120 秒查询，429 尊重秒数或 HTTP 日期形式的 `Retry-After`，120–3600 秒退避。
@@ -267,7 +272,11 @@ Claude Code 登录同一 Claude 账号；首次需要登录时使用官方 `clau
   和自动更新；不确认信任/登录提示，不发送对话，不保存终端输出。只有重新读到有效凭据
   才继续查询，续期不成功时提示用户重新登录。Bridge 从不写 Claude 的凭据或自行兑换 refresh token。
 - 支持标准 Claude 安装和 Windows 商店版 Claude 内置程序路径。
-  macOS/Linux 当前支持凭据文件；不在后台读取或弹出 macOS Keychain 授权。
+  macOS 登录过期时以同样限制在伪终端运行 `/status`，让 Claude Code 自行续期并写回钥匙串。
+  依次查找 PATH、`~/.local/bin`、Homebrew 与 Claude 桌面版自带的
+  `~/Library/Application Support/Claude/claude-code/<版本>/…/claude.app`。
+  桌面版的 Code 登录不写入钥匙串；只用桌面版时需先用其自带程序执行一次 `claude auth login`。
+  Linux 当前只支持凭据文件。
 
 这是按需移植的 OAuth 路径，不包含 CodexBar 的网页 Cookie、账单、模型专属额度与全部备用采集器。
 账户接口并非稳定公共 API，服务变动时本机面板会显示连接错误，系统指标与离线天气时钟不受影响。
@@ -276,3 +285,8 @@ Codex 继续通过现有官方 `codex app-server` 读取限额，这是 CodexBar
 HTTP 增加 `/v1/claude-usage`，`/v1/overview` 增加 `claude`。USB 增加独立的
 `$MSA1,five_hour_remaining10,seven_day_remaining10,stale*CRC16`；缺失值 `-1`，有效值 0–1000。
 旧 MSD4 固件忽略这个辅助包，新固件 15 秒收不到辅助包就清空 Claude 区域；辅助流量不能阻止离线时钟启动。
+
+Codex 的 5 小时窗口取自同一份 app-server 限额（`primary`，最接近 5 小时的短窗口），
+`/v1/codex-usage` 与 `/v1/overview.usage` 增加 `session` 字段（套餐没有短窗口时为 `null`）。
+USB 增加 `$MSA2,five_hour_remaining10,week_remaining10,stale*CRC16`，格式与 `MSA1` 相同；
+`MSD4` 中的 Codex 字段仍为每周余量，旧固件不受影响。

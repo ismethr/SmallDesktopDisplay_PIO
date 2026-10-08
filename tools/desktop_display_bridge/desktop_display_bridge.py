@@ -59,6 +59,7 @@ from display_protocol import (  # noqa: F401 - re-exported for existing importer
     encode_calendar_frame,
     encode_claude_frame,
     encode_clock_frame,
+    encode_codex_frame,
     encode_status_frame,
     encode_weather_frame,
 )
@@ -757,6 +758,7 @@ def serial_writer_loop(
     runtime_settings: SettingsState | None = None,
     weather_cache: WeatherCache | None = None,
     claude_state: ClaudeUsageState | None = None,
+    codex_state: codex.UsageState | None = None,
 ) -> None:
     assert serial is not None
     active = None
@@ -826,6 +828,8 @@ def serial_writer_loop(
             continue
         try:
             frame = encode_status_frame(snapshot) + encode_clock_frame()
+            if codex_state is not None:
+                frame += encode_codex_frame(codex_state.get())
             if claude_state is not None:
                 frame += encode_claude_frame(claude_state.get())
             frame += encode_calendar_frame()
@@ -1256,7 +1260,8 @@ def main(argv: list[str] | None = None, *, stop_event: threading.Event | None = 
             threading.Thread(
                 target=serial_writer_loop,
                 args=(status_state, usb_state, stop_event, args.serial_port, args.serial_baud,
-                      DEFAULT_RECONNECT_SECONDS, settings_state, weather_cache, claude_state),
+                      DEFAULT_RECONNECT_SECONDS, settings_state, weather_cache, claude_state,
+                      usage_state),
                 name="usb-display-writer",
                 daemon=True,
             )

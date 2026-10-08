@@ -9,6 +9,7 @@ frames can be added without breaking older screens:
 ``MSC1``  local seconds since midnight
 ``MSC2``  local wall-clock time encoded as a UTC epoch (date for the clock)
 ``MSA1``  Claude 5-hour and weekly remaining quota
+``MSA2``  Codex 5-hour and weekly remaining quota (MSD4 keeps the weekly value)
 ``MSW1``  cached weather JSON for the offline clock page
 """
 
@@ -115,6 +116,16 @@ def encode_claude_frame(usage: Mapping[str, Any]) -> bytes:
         return round(window["remaining_percent"] * 10) if window else -1
 
     payload = f'MSA1,{remaining("five_hour")},{remaining("seven_day")},{int(bool(usage["stale"]))}'
+    return wrap_frame(payload.encode("ascii"))
+
+
+def encode_codex_frame(usage: Any) -> bytes:
+    """Codex 5-hour and weekly remaining tenths from a ``codex.UsageSnapshot``."""
+    def tenths(value: int | None) -> int:
+        return MISSING_CODEX_USAGE if value is None or not usage.valid else bounded_tenths(value, 0, 1000)
+
+    payload = (f"MSA2,{tenths(usage.session_remaining_percent)},{tenths(usage.remaining_percent)},"
+               f"{int(bool(usage.stale or not usage.valid))}")
     return wrap_frame(payload.encode("ascii"))
 
 

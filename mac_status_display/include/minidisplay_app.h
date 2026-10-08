@@ -17,7 +17,9 @@ namespace minidisplay {
 class MiniDisplayApp {
  public:
   static constexpr uint32_t kOfflineAfterMs = 4000;
-  static constexpr uint32_t kClaudeExpiryMs = 15000;
+  // Quota frames (MSA1/MSA2) are cleared when the bridge stops sending them.
+  static constexpr uint32_t kQuotaExpiryMs = 15000;
+  static constexpr uint32_t kClaudeExpiryMs = kQuotaExpiryMs;
   static constexpr uint8_t kDefaultDayBrightness = 50;
   static constexpr uint8_t kDefaultOfflineBrightness = 5;
 
@@ -30,7 +32,9 @@ class MiniDisplayApp {
 
   bool offline() const { return offline_; }
   uint8_t brightness() const { return brightness_; }
-  const macstatus::ClaudeUsageFrame &claudeUsage() const { return claude_; }
+  const macstatus::QuotaFrame &claudeUsage() const { return claude_; }
+  // What the Codex card shows: MSA2 when fresh, else MSD4's weekly value.
+  macstatus::QuotaFrame codexUsage() const;
   const macstatus::OfflineClock &clock() const { return clock_; }
 
  private:
@@ -41,10 +45,16 @@ class MiniDisplayApp {
   StatusScreen status_;
   OfflineScreen offlinePage_;
   macstatus::OfflineClock clock_;
-  macstatus::ClaudeUsageFrame claude_;
+  macstatus::QuotaFrame claude_;
   bool hasClaude_ = false;
-  bool offline_ = false;
   uint32_t lastClaudeAt_ = 0;
+  macstatus::QuotaFrame codex_;
+  bool hasCodex_ = false;
+  uint32_t lastCodexAt_ = 0;
+  // Codex weekly quota from the last MSD4 frame, for bridges without MSA2.
+  int16_t statusCodexWeekTenths_ = macstatus::kMissingCodexUsage;
+  bool statusCodexStale_ = false;
+  bool offline_ = false;
   uint32_t lastStatusAt_ = 0;
   uint8_t brightness_ = UINT8_MAX;  // Unknown until the first write.
   uint8_t offlineBrightness_ = kDefaultOfflineBrightness;
