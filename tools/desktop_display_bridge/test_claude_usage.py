@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 import tempfile
 import threading
 import unittest
@@ -212,6 +213,214 @@ class ClaudeUsageTests(unittest.TestCase):
             state.run(settings, stop)
         self.assertEqual('disabled', state.get(NOW)['error'])
         self.assertFalse(state.get(NOW)['ok'])
+
+
+def keychain_document(token="keychain-test-token", expires=NOW + 3600, scopes=("user:profile",)):
+    return json.dumps({"claudeAiOauth": {"accessToken": token, "expiresAt": expires * 1000,
+                                         "scopes": list(scopes)}}).encode()
+
+
+class MacKeychainTests(unittest.TestCase):
+    """Never touches the real Keychain: security(1) is always mocked."""
+
+    def setUp(self):
+        claude.forget_keychain_token()
+        self.addCleanup(claude.forget_keychain_token)
+        self.home = tempfile.TemporaryDirectory()
+        self.addCleanup(self.home.cleanup)
+        env = {k: v for k, v in claude.os.environ.items() if k != "CLAUDE_CONFIG_DIR"}
+        for patcher in (mock.patch.dict(claude.os.environ, env, clear=True),
+                        mock.patch.object(claude.Path, "home", return_value=Path(self.home.name)),
+                        mock.patch.object(claude.sys, "platform", "darwin"),
+                        mock.patch.object(claude.time, "time", return_value=NOW),
+                        mock.patch.object(claude.time, "sleep")):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def security(self, returncode=0, stdout=b""):
+        return mock.patch.object(claude.subprocess, "run", return_value=SimpleNamespace(
+            returncode=returncode, stdout=stdout))
+
+    def write_file(self, document):
+        directory = Path(self.home.name) / ".claude"
+        directory.mkdir(exist_ok=True)
+        (directory / ".credentials.json").write_bytes(document)
+
+    def test_reads_claude_code_keychain_item_read_only(self):
+        with self.security(stdout=keychain_document() + b"\n") as run:
+            self.assertEqual("keychain-test-token", claude.read_access_token())
+        argv = run.call_args.args[0]
+        self.assertEqual([claude.SECURITY_TOOL, "find-generic-password", "-s", "Claude Code-credentials", "-w"], argv)
+        self.assertEqual(claude.KEYCHAIN_TIMEOUT_SECONDS, run.call_args.kwargs["timeout"])
+
+    def test_hex_output_from_security_is_decoded(self):
+        with self.security(stdout=keychain_document().hex().encode() + b"\n"):
+            self.assertEqual("keychain-test-token", claude.read_access_token())
+
+    def test_unexpired_token_is_reused_without_another_keychain_read(self):
+        with self.security(stdout=keychain_document()) as run:
+            claude.read_access_token()
+            claude.read_access_token()
+            self.assertEqual(1, run.call_count)
+            claude.forget_keychain_token()
+            claude.read_access_token()
+            self.assertEqual(2, run.call_count)
+        with self.security(stdout=keychain_document(token="rotated-token", expires=NOW + 7200)) as run:
+            with mock.patch.object(claude.time, "time", return_value=NOW + 3600 - 30):
+                self.assertEqual("rotated-token", claude.read_access_token())
+            run.assert_called_once()
+
+    def test_file_takes_precedence_and_stale_file_falls_back_to_keychain(self):
+        self.write_file(keychain_document(token="file-token"))
+        with self.security(stdout=keychain_document()) as run:
+            self.assertEqual("file-token", claude.read_access_token())
+            run.assert_not_called()
+        self.write_file(keychain_document(token="file-token", expires=NOW - 1))
+        with self.security(stdout=keychain_document()):
+            self.assertEqual("keychain-test-token", claude.read_access_token())
+        claude.forget_keychain_token()
+        with self.security(returncode=claude.KEYCHAIN_ITEM_NOT_FOUND):
+            with self.assertRaisesRegex(claude.UsageError, "login_expired"):
+                claude.read_access_token()
+
+    def test_missing_denied_and_unanswered_keychain_errors(self):
+        with self.security(returncode=claude.KEYCHAIN_ITEM_NOT_FOUND):
+            with self.assertRaisesRegex(claude.UsageError, "login_required"):
+                claude.read_access_token()
+        for code in (128, 51, 36):
+            with self.security(returncode=code):
+                with self.assertRaisesRegex(claude.UsageError, "keychain_denied"):
+                    claude.read_access_token()
+        with mock.patch.object(claude.subprocess, "run", side_effect=claude.subprocess.TimeoutExpired("security", 30)):
+            with self.assertRaisesRegex(claude.UsageError, "keychain_denied"):
+                claude.read_access_token()
+        with self.security(stdout=keychain_document(scopes=("user:inference",))):
+            with self.assertRaisesRegex(claude.UsageError, "missing_scope"):
+                claude.read_access_token()
+
+    def test_keychain_is_skipped_for_other_profiles_platforms_and_when_disallowed(self):
+        with self.security(stdout=keychain_document()) as run:
+            with mock.patch.dict(claude.os.environ, {"CLAUDE_CONFIG_DIR": self.home.name}):
+                with self.assertRaisesRegex(claude.UsageError, "login_required"):
+                    claude.read_access_token()
+            with mock.patch.object(claude.sys, "platform", "linux"):
+                with self.assertRaisesRegex(claude.UsageError, "login_required"):
+                    claude.read_access_token()
+            with self.assertRaisesRegex(claude.UsageError, "login_required"):
+                claude.read_access_token(allow_keychain=False)
+            run.assert_not_called()
+
+    def test_denied_keychain_is_not_asked_again_until_user_opts_in_again(self):
+        stop = threading.Event()
+        enabled = [True]
+        settings = SimpleNamespace(path=Path("unused/settings.json"),
+                                   get=lambda: DisplaySettings(claude_enabled=enabled[0]))
+        calls = []
+
+        def read(allow_keychain=True):
+            calls.append(allow_keychain)
+            if len(calls) == 1:
+                raise claude.UsageError("keychain_denied")
+            if len(calls) == 2:
+                raise claude.UsageError("login_required")
+            stop.set()
+            return "test-only"
+
+        clock = iter(range(0, 10000, 200))
+        state = claude.ClaudeUsageState()
+        def wait(_seconds):
+            if len(calls) == 2 and enabled[0]:
+                self.assertEqual("keychain_denied", state.get(NOW)["error"])
+                enabled[0] = False  # The user turns the setting off...
+            elif not enabled[0]:
+                enabled[0] = True  # ...and on again.
+        with mock.patch.object(claude, "read_access_token", side_effect=read), \
+             mock.patch.object(claude, "fetch_usage", return_value=DATA), \
+             mock.patch.object(claude.time, "monotonic", side_effect=lambda: next(clock)), \
+             mock.patch.object(stop, "wait", side_effect=wait):
+            state.run(settings, stop)
+        self.assertEqual([True, False, True], calls)
+
+    def test_rejected_token_is_forgotten(self):
+        stop = threading.Event()
+        settings = SimpleNamespace(path=Path("unused/settings.json"),
+                                   get=lambda: DisplaySettings(claude_enabled=True))
+        def fetch(_token):
+            stop.set()
+            raise claude.UsageError("login_expired")
+        with mock.patch.object(claude, "read_access_token", return_value="test-only"), \
+             mock.patch.object(claude, "fetch_usage", side_effect=fetch), \
+             mock.patch.object(claude, "forget_keychain_token") as forget:
+            claude.ClaudeUsageState().run(settings, stop)
+        forget.assert_called()
+
+
+FAKE_CLAUDE = r'''#!{python}
+import os, sys, time, tty
+tty.setraw(0)
+os.write(1, b"\x1b[6n")
+reply = b""
+while not reply.endswith(b"R"):
+    reply += os.read(0, 1)
+with open(os.environ["FAKE_CLAUDE_MARKER"], "w") as stream:
+    stream.write("%d %s" % (os.getpid(), reply.decode()))
+time.sleep(60)
+'''
+
+
+@unittest.skipIf(sys.platform == "win32", "macOS probe uses a POSIX pty")
+class MacClaudeProbeTests(unittest.TestCase):
+    def setUp(self):
+        self.home = tempfile.TemporaryDirectory()
+        self.addCleanup(self.home.cleanup)
+        for patcher in (mock.patch.object(claude_cli.sys, "platform", "darwin"),
+                        mock.patch.object(claude_cli.Path, "home", return_value=Path(self.home.name)),
+                        mock.patch.object(claude_cli.shutil, "which", return_value=None),
+                        mock.patch.object(claude_cli, "MACOS_SYSTEM_BINARIES", ())):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def desktop_binary(self, version, build="abc123", script="#!/bin/sh\nsleep 60\n"):
+        path = (Path(self.home.name) / "Library" / "Application Support" / "Claude" / "claude-code" /
+                version / build / "claude.app" / "Contents" / "MacOS" / "claude")
+        path.parent.mkdir(parents=True)
+        path.write_text(script)
+        path.chmod(0o755)
+        return path
+
+    def test_finds_newest_claude_desktop_copy_and_prefers_standalone_cli(self):
+        self.assertIsNone(claude_cli.find_claude_binary())
+        self.desktop_binary("2.1.9")
+        newest = self.desktop_binary("2.1.286")
+        (Path(self.home.name) / "Library" / "Application Support" / "Claude" / "claude-code" / "latest").mkdir()
+        self.assertEqual(newest, claude_cli.find_claude_binary())
+        standalone = Path(self.home.name) / ".local" / "bin" / "claude"
+        standalone.parent.mkdir(parents=True)
+        standalone.write_text("#!/bin/sh\n")
+        standalone.chmod(0o644)
+        self.assertEqual(newest, claude_cli.find_claude_binary())  # not executable
+        standalone.chmod(0o755)
+        self.assertEqual(standalone, claude_cli.find_claude_binary())
+
+    def test_probe_answers_only_cursor_query_and_is_reaped(self):
+        self.desktop_binary("2.1.286", script=FAKE_CLAUDE.replace("{python}", sys.executable))
+        marker = Path(self.home.name) / "answered"
+        with mock.patch.dict(claude_cli.os.environ, {"FAKE_CLAUDE_MARKER": str(marker)}):
+            renewed = claude_cli.renew_credentials(Path(self.home.name) / "probe", threading.Event(),
+                                                   marker.exists, timeout=10)
+        self.assertTrue(renewed)
+        pid, reply = marker.read_text().split(" ", 1)
+        self.assertEqual("\x1b[1;1R", reply)
+        with self.assertRaises(ProcessLookupError):
+            claude_cli.os.kill(int(pid), 0)
+
+    def test_probe_is_bounded_and_missing_binary_is_not_fatal(self):
+        stop = threading.Event()
+        self.assertFalse(claude_cli.renew_credentials(Path(self.home.name) / "probe", stop, lambda: False))
+        self.desktop_binary("2.1.286")
+        started = claude_cli.time.monotonic()
+        self.assertFalse(claude_cli.renew_credentials(Path(self.home.name) / "probe", stop, lambda: False, timeout=1))
+        self.assertLess(claude_cli.time.monotonic() - started, 6)
 
 
 if __name__ == '__main__':
