@@ -22,11 +22,11 @@ CPU、内存和网卡计数统一由 [psutil](https://github.com/giampaolo/psuti
 
 macOS App 的正式名称是 **MiniDisplay Bridge（迷你屏桥接）**。发布包按架构区分：x86 平台使用 `SmallDesktopDisplayBridge-macos-x86_64.zip`，ARM 平台使用 `SmallDesktopDisplayBridge-macos-arm64.zip`。解压后将 `MiniDisplay Bridge.app` 拖入“应用程序”，双击后常驻菜单栏，不占用 Dock；重复启动不会产生第二组实例。它会自动识别唯一的 CH340/USB 串口，包括本项目常见的 `/dev/cu.usbserial-*`。
 
-- 左键点击菜单栏的小屏图标：打开 App 内的状态与设置面板。
-- 右键点击：选择“打开状态面板”“显示屏设置…”或“退出 MiniDisplay Bridge”。
+- 左键点击菜单栏的小屏图标：弹出原生状态浮层，再次点击或点击别处即收起。
+- 右键点击：选择“打开状态面板”“显示屏设置…”“在浏览器中打开详细页面”或“退出 MiniDisplay Bridge”。
 - 关闭面板只隐藏窗口，USB 更新继续运行；退出 App 会一并停止后台采集并释放串口。
 
-菜单栏由系统 AppKit 实现，图标随浅色/深色菜单栏自动适配；内置 WebKit 仅加载本机状态页面，不打开远程网页。菜单栏功能需 1.11.0 或更新版本，旧发布包仍是纯后台模式。
+菜单栏界面由 AppKit 与 SwiftUI 原生实现：左键弹出系统样式的状态浮层（USB、CPU/内存/温度、Codex 与 Claude 的 5 小时和每周余量、出口位置与网速），“设置…”打开原生设置窗口，可选在菜单栏图标旁显示最低的 5 小时余量。界面只读取本机 `127.0.0.1` 接口，随系统浅色/深色模式切换；完整网页面板改为在默认浏览器中打开。原生界面需 macOS 15 或更新版本。
 
 运行日志位于：
 
@@ -36,7 +36,7 @@ macOS App 的正式名称是 **MiniDisplay Bridge（迷你屏桥接）**。发�
 
 可在浏览器打开 [本机状态页面](http://127.0.0.1:8766/)，查看 USB 连接、CPU/内存、温度、网速、出口位置以及 Codex 余量和更新时间。页面每秒自动刷新，宽窗口并排显示，窄窗口自动单列排列；“刷新状态”只重新读取本机数据，不会额外请求 Codex 或位置服务。原有 `/health` 诊断接口继续保留。
 
-要开机自动运行，可在“系统设置 → 通用 → 登录项”中添加 `MiniDisplay Bridge.app`；要停止可右键菜单栏图标并选择“退出 MiniDisplay Bridge”。
+要开机自动运行，打开“设置…”开启“登录时自动启动”，或在右键菜单中勾选同名项。它使用系统登录项（`SMAppService`），与“系统设置 → 通用 → 登录项”同步，任一处都可关闭；请先把 App 放到“应用程序”文件夹再开启。要停止可右键菜单栏图标并选择“退出 MiniDisplay Bridge”。
 
 社区构建使用临时签名而非 Apple Developer ID。首次运行下载的发布包时，请在 Finder 中右键 App 并选择“打开”；不要运行来源不明的同名程序。
 
@@ -230,7 +230,7 @@ pio run -d mac_status_display -e esp12e -t upload --upload-port /dev/ttyUSB0
 - `/v1/mac-status`：保留的旧版兼容路径，内容与 `/v1/desktop-status` 相同。
 - `/v1/codex-usage`：本机 Codex 用量诊断接口。
 
-状态诊断接口没有账号认证，不应暴露到不可信网络；设置接口另外限制为本机访问。macOS 菜单栏 App 固定绑定 `127.0.0.1`，WebKit 的 HTTP 例外也仅针对该回环地址，不关闭全局网络安全检查。默认情况下桥接通过 Codex 官方 App Server 获取限额，不读取 OAuth 令牌；兼容旧版客户端的 `legacy` 回退也只会把令牌发送至经过 TLS 验证的 `chatgpt.com`。凭据不会进入 USB 数据帧、App 包或日志。
+状态诊断接口没有账号认证，不应暴露到不可信网络；设置接口另外限制为本机访问。macOS 菜单栏 App 固定绑定 `127.0.0.1`，原生界面的 HTTP 例外也仅针对该回环地址，不关闭全局网络安全检查。默认情况下桥接通过 Codex 官方 App Server 获取限额，不读取 OAuth 令牌；兼容旧版客户端的 `legacy` 回退也只会把令牌发送至经过 TLS 验证的 `chatgpt.com`。凭据不会进入 USB 数据帧、App 包或日志。
 
 ## USB 协议
 

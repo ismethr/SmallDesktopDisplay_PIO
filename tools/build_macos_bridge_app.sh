@@ -63,10 +63,7 @@ export PYINSTALLER_CONFIG_DIR="${pyinstaller_config_directory}"
 compile_smc_helper() {
   local architecture="$1"
   local output="$2"
-  local deployment_target="10.15"
-  if [[ "${architecture}" == "arm64" ]]; then
-    deployment_target="11.0"
-  fi
+  local deployment_target="15.0"
   xcrun --sdk macosx clang -O2 -Wall -Wextra -Werror \
     -arch "${architecture}" \
     -mmacosx-version-min="${deployment_target}" \
@@ -79,14 +76,11 @@ compile_smc_helper() {
 compile_menu_helper() {
   local architecture="$1"
   local output="$2"
-  local deployment_target="10.15"
-  if [[ "${architecture}" == "arm64" ]]; then
-    deployment_target="11.0"
-  fi
+  # The native SwiftUI popover and grouped settings form target macOS 15.
   xcrun --sdk macosx swiftc -O -swift-version 5 \
-    -target "${architecture}-apple-macosx${deployment_target}" \
+    -target "${architecture}-apple-macosx15.0" \
     -module-cache-path "${build_root}/swift-module-cache" \
-    "${menu_source}" -framework AppKit -framework WebKit -o "${output}"
+    "${menu_source}" -framework AppKit -framework SwiftUI -framework ServiceManagement -o "${output}"
 }
 
 if ! command -v xcrun >/dev/null 2>&1; then
@@ -143,8 +137,8 @@ else
 fi
 
 info_plist="${app_path}/Contents/Info.plist"
-# WebKit loads only the bundled worker's loopback HTTP page. Do not disable ATS
-# globally or allow arbitrary web content/network destinations.
+# The native UI only talks to the bundled worker's loopback HTTP API. Do not
+# disable ATS globally or allow arbitrary network destinations.
 /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "${info_plist}"
 /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSExceptionDomains dict" "${info_plist}"
 /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSExceptionDomains:127.0.0.1 dict" "${info_plist}"
@@ -154,6 +148,9 @@ if ! /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${release_versi
 fi
 if ! /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${release_version}" "${info_plist}" 2>/dev/null; then
   /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${release_version}" "${info_plist}"
+fi
+if ! /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 15.0" "${info_plist}" 2>/dev/null; then
+  /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 15.0" "${info_plist}"
 fi
 if ! /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "${info_plist}" 2>/dev/null; then
   /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "${info_plist}"
