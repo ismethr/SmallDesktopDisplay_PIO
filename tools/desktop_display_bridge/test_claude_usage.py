@@ -67,7 +67,8 @@ class ClaudeUsageTests(unittest.TestCase):
     def test_data_ages_without_worker_running(self):
         state = claude.ClaudeUsageState()
         state.update(DATA, NOW)
-        self.assertTrue(state.get(NOW + 301)["stale"])
+        self.assertFalse(state.get(NOW + claude.REFRESH_SECONDS + 1)["stale"])
+        self.assertTrue(state.get(NOW + claude.STALE_SECONDS + 1)["stale"])
 
     def test_logout_and_disabled_clear_previous_account(self):
         for code in ("login_required", "login_expired", "access_denied", "disabled"):
@@ -141,7 +142,8 @@ class ClaudeUsageTests(unittest.TestCase):
         self.assertEqual(600, claude.retry_after_seconds('Tue, 14 Nov 2023 22:23:20 GMT', NOW))
         self.assertEqual(300, claude.retry_after_seconds('nonsense', NOW))
         self.assertEqual(3600, claude.retry_after_seconds('99999', NOW))
-        self.assertEqual(120, claude.retry_after_seconds('0', NOW))
+        # A 429 never retries sooner than the normal refresh interval.
+        self.assertEqual(claude.REFRESH_SECONDS, claude.retry_after_seconds('0', NOW))
         self.assertEqual(300, claude.retry_after_seconds('NaN', NOW))
 
     def test_missing_scope_and_unknown_expiry_never_sent(self):

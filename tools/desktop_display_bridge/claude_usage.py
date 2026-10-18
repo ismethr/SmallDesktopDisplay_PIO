@@ -27,8 +27,11 @@ from typing import Any
 from claude_cli import renew_credentials
 
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-REFRESH_SECONDS = 120
-STALE_SECONDS = 300
+# Quota windows move slowly; five minutes keeps the undocumented endpoint
+# well below any rate limit while the screen stays current.
+REFRESH_SECONDS = 300
+# Allows one missed refresh before cached values are marked stale.
+STALE_SECONDS = 2 * REFRESH_SECONDS + 60
 MAX_BYTES = 65536
 # Claude Code's own macOS Keychain item (the same source CodexBar reads).
 KEYCHAIN_SERVICE = "Claude Code-credentials"

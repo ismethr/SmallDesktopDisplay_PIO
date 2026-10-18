@@ -203,7 +203,7 @@ pio run -d mac_status_display -e esp12e -t upload --upload-port /dev/ttyUSB0
 - `DESKTOP_BRIDGE_NETWORK_INTERFACE`：可选网卡名；留空时跟随系统默认路由。
 - `DESKTOP_BRIDGE_TEMPERATURE_REFRESH_SECONDS`：macOS 温度刷新周期，默认 `10` 秒，可设为 `2`–`300` 秒。
 - `DESKTOP_BRIDGE_TEMPERATURE_COMMAND`：可选的只读 SMC 辅助程序路径；发布版 App 已内置，通常无需设置。
-- `DESKTOP_BRIDGE_LOCATION_REFRESH_SECONDS`：公网出口位置刷新周期，默认 `30` 秒，可设为 `10`–`3600` 秒。
+- `DESKTOP_BRIDGE_LOCATION_REFRESH_SECONDS`：公网出口位置刷新周期，默认 `600` 秒，可设为 `10`–`3600` 秒。本机网络变化（切换 Wi-Fi、VPN 接口出现或消失、IP 改变）时会提前刷新，两次请求至少间隔 15 秒。
 - `DESKTOP_BRIDGE_LOCATION_ENABLED`：设为 `0`、`false`、`no` 或 `off` 可完全关闭公网出口位置请求。
 - `DESKTOP_BRIDGE_LOCATION_URL`：位置服务地址，当前仅接受 `https://ipwho.is/`。
 - `DESKTOP_BRIDGE_NIGHT_START_HOUR`、`DESKTOP_BRIDGE_NIGHT_END_HOUR`：夜间节能开始和结束小时，默认 `0` 和 `7`；两者相同表示关闭定时节能。
@@ -265,7 +265,7 @@ Claude Code 登录同一 Claude 账号；首次需要登录时使用官方 `clau
   到期、认证失败或关闭开关时丢弃。
 - 请求 `https://api.anthropic.com/api/oauth/usage`，保留所需 OAuth beta 请求头。
   `five_hour` 与 `seven_day` 各自独立处理；缺失窗口显示 `--`，不会把花费或上下文余量当成订阅额度。
-- 每 120 秒查询，429 尊重秒数或 HTTP 日期形式的 `Retry-After`，120–3600 秒退避。
+- 每 300 秒查询，429 尊重秒数或 HTTP 日期形式的 `Retry-After`，300–3600 秒退避；超过 660 秒未更新的数据标为陈旧。
   网络故障保留有时间标记的上次数据，重置时间到达后清空旧窗口；认证失败清空账户缓存。
 - Windows 登录过期时最多每 5 分钟启动一次官方 Claude `/status`，限时 12 秒。
   通过 ConPTY 隐藏运行于专用目录，禁用工具、MCP、用户/项目设置、Hooks、Remote Control

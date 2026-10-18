@@ -568,5 +568,62 @@ class DisplaySettingsTests(unittest.TestCase):
             self.assertEqual([10, 6], [s.display_brightness_percent for s in snapshots])
 
 
+
+class NetworkLocationScheduleTests(unittest.TestCase):
+    """Egress location: periodic refresh, plus early refresh on local network changes."""
+
+    def run_loop(self, fingerprints, minutes, refresh_seconds=600.0):
+        clock = [0.0]
+        fetches = []
+        stop = threading.Event()
+
+        def wait(seconds):
+            clock[0] += seconds
+            if clock[0] >= minutes * 60:
+                stop.set()
+            return stop.is_set()
+
+        def fetch(_url):
+            fetches.append(clock[0])
+            return bridge.NetworkLocationSnapshot(label="CN-YN", source="ipwho.is", error=None)
+
+        with mock.patch.object(bridge, "fetch_network_location", side_effect=fetch), \
+             mock.patch.object(bridge.time, "monotonic", side_effect=lambda: clock[0]), \
+             mock.patch.object(stop, "wait", side_effect=wait):
+            bridge.network_location_refresh_loop(
+                bridge.NetworkLocationState(), stop, refresh_seconds, "https://ipwho.is/",
+                fingerprint=lambda: fingerprints(clock[0]), poll_seconds=5.0, min_gap_seconds=15.0)
+        return fetches
+
+    def test_steady_network_refreshes_every_ten_minutes(self):
+        fetches = self.run_loop(lambda _now: frozenset({("en0", "192.168.1.2")}), minutes=30)
+        self.assertEqual([0.0, 600.0, 1200.0], fetches)
+
+    def test_network_change_refreshes_early_but_not_inside_the_gap(self):
+        def fingerprints(now):
+            # Wi-Fi switch at 100 s; a VPN interface appears 5 s after the refetch.
+            if now < 100:
+                return frozenset({("en0", "192.168.1.2")})
+            if now < 110:
+                return frozenset({("en0", "10.0.0.8")})
+            return frozenset({("en0", "10.0.0.8"), ("utun4", "inet6")})
+
+        fetches = self.run_loop(fingerprints, minutes=5)
+        # Change at 100 s -> fetch at 100 s; the VPN change at 110 s waits for
+        # the 15 s gap and is fetched at 115 s; then quiet until 715 s.
+        self.assertEqual([0.0, 100.0, 115.0], fetches)
+
+    def test_fingerprint_ignores_loopback_and_ipv6_address_rotation(self):
+        entry = lambda family, address: SimpleNamespace(family=family, address=address)
+        first = {"lo0": [entry(bridge.socket.AF_INET, "127.0.0.1")],
+                 "en0": [entry(bridge.socket.AF_INET, "192.168.1.2"), entry(bridge.socket.AF_INET6, "fe80::1")]}
+        rotated = {"lo0": first["lo0"],
+                   "en0": [entry(bridge.socket.AF_INET, "192.168.1.2"), entry(bridge.socket.AF_INET6, "fe80::2")]}
+        with mock.patch.object(bridge.psutil, "net_if_addrs", side_effect=[first, rotated]):
+            a, b = bridge.network_fingerprint(), bridge.network_fingerprint()
+        self.assertEqual(a, b)
+        self.assertEqual(frozenset({("en0", "192.168.1.2"), ("en0", "inet6")}), a)
+
+
 if __name__ == "__main__":
     unittest.main()

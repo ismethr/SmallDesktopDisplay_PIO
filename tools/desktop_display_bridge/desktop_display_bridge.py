@@ -25,7 +25,7 @@ from dataclasses import asdict, dataclass, replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlparse
 
 try:
@@ -72,7 +72,11 @@ DEFAULT_SERIAL_BAUD = 115200
 DEFAULT_SAMPLE_SECONDS = 1.0
 DEFAULT_TEMPERATURE_REFRESH_SECONDS = 10.0
 DEFAULT_TEMPERATURE_TIMEOUT_SECONDS = 4.0
-DEFAULT_NETWORK_LOCATION_REFRESH_SECONDS = 30.0
+DEFAULT_NETWORK_LOCATION_REFRESH_SECONDS = 600.0
+# Local network changes (Wi-Fi switch, VPN up/down) refresh the egress location
+# early instead of waiting for the next periodic request.
+NETWORK_CHANGE_POLL_SECONDS = 5.0
+NETWORK_CHANGE_MIN_GAP_SECONDS = 15.0
 DEFAULT_NETWORK_LOCATION_TIMEOUT_SECONDS = 8.0
 DEFAULT_NETWORK_LOCATION_URL = "https://ipwho.is/"
 DEFAULT_RECONNECT_SECONDS = 2.0
@@ -481,15 +485,50 @@ def merge_network_location(
     )
 
 
+def network_fingerprint() -> frozenset[tuple[str, str]]:
+    """Interfaces and their IPv4 addresses; changes when the local network does.
+
+    IPv6 addresses are reduced to the interface name because privacy addresses
+    rotate on their own and would cause needless location requests.
+    """
+    if psutil is None:
+        return frozenset()
+    try:
+        addresses = psutil.net_if_addrs()
+    except (OSError, RuntimeError):
+        return frozenset()
+    fingerprint: set[tuple[str, str]] = set()
+    for name, entries in addresses.items():
+        if _is_loopback_interface(name):
+            continue
+        for entry in entries:
+            if entry.family == socket.AF_INET:
+                fingerprint.add((name, entry.address))
+            elif entry.family == socket.AF_INET6:
+                fingerprint.add((name, "inet6"))
+    return frozenset(fingerprint)
+
+
 def network_location_refresh_loop(
     state: NetworkLocationState,
     stop_event: threading.Event,
     refresh_seconds: float,
     url: str,
+    fingerprint: Callable[[], frozenset[tuple[str, str]]] = network_fingerprint,
+    poll_seconds: float = NETWORK_CHANGE_POLL_SECONDS,
+    min_gap_seconds: float = NETWORK_CHANGE_MIN_GAP_SECONDS,
 ) -> None:
     while not stop_event.is_set():
         state.set(merge_network_location(state.get(), fetch_network_location(url)))
-        stop_event.wait(refresh_seconds)
+        fetched_at = time.monotonic()
+        seen = fingerprint()
+        while not stop_event.wait(poll_seconds):
+            elapsed = time.monotonic() - fetched_at
+            if elapsed >= refresh_seconds:
+                break
+            # A change seen inside the gap is kept and triggers once it passes.
+            if elapsed >= min_gap_seconds and fingerprint() != seen:
+                break
 
 
 def default_route_interface_from_socket() -> str | None:

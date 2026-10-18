@@ -25,7 +25,7 @@ USB 状态屏只会收到已用/剩余百分比和陈旧标志。App Server 负�
 
 - `CODEX_BRIDGE_HOST`：监听地址，默认 `127.0.0.1`；仅在确有局域网调用方时才改为 `0.0.0.0`。
 - `CODEX_BRIDGE_PORT`：监听端口，默认 `8766`。
-- `CODEX_BRIDGE_REFRESH_SECONDS`：刷新周期，默认 60 秒，最小 60 秒。USB 屏每秒收到最近一次成功结果，不会每秒请求 ChatGPT。
+- `CODEX_BRIDGE_REFRESH_SECONDS`：刷新周期，默认 300 秒，最小 60 秒。USB 屏每秒收到最近一次成功结果，不会每秒请求 ChatGPT。
 - `CODEX_BRIDGE_SOURCE`：`auto`（默认）、`app-server` 或 `legacy`。
 - `CODEX_BRIDGE_CODEX_BINARY`：可选的 Codex 可执行文件路径；macOS 会自动发现 ChatGPT App 内置版本。
 
