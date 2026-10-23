@@ -217,6 +217,28 @@ class ClaudeUsageTests(unittest.TestCase):
         self.assertFalse(state.get(NOW)['ok'])
 
 
+    def test_state_transitions_are_logged_without_credentials(self):
+        stop = threading.Event()
+        settings = SimpleNamespace(path=Path('unused/settings.json'), get=lambda: DisplaySettings(claude_enabled=True))
+        reads = [claude.UsageError('login_required'), 'secret-test-token']
+        def read(allow_keychain=True):
+            value = reads.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            stop.set()
+            return value
+        clock = iter(range(0, 100000, 400))
+        with mock.patch.object(claude, 'read_access_token', side_effect=read), \
+             mock.patch.object(claude, 'fetch_usage', return_value=DATA), \
+             mock.patch.object(claude.time, 'time', return_value=NOW), \
+             mock.patch.object(claude.time, 'monotonic', side_effect=lambda: next(clock)), \
+             mock.patch.object(claude.sys, 'stderr', new_callable=io.StringIO) as log:
+            claude.ClaudeUsageState().run(settings, stop)
+        lines = log.getvalue().splitlines()
+        self.assertTrue(any(line.endswith('state start -> login_required') for line in lines), lines)
+        self.assertTrue(any(line.endswith('state login_required -> ok') for line in lines), lines)
+        self.assertNotIn('secret-test-token', log.getvalue())
+
 def keychain_document(token="keychain-test-token", expires=NOW + 3600, scopes=("user:profile",)):
     return json.dumps({"claudeAiOauth": {"accessToken": token, "expiresAt": expires * 1000,
                                          "scopes": list(scopes)}}).encode()

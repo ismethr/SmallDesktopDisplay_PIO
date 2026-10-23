@@ -241,6 +241,12 @@ def fetch_usage(token: str) -> dict[str, Any]:
         raise UsageError("network_error") from None
 
 
+def log_event(message: str) -> None:
+    """One timestamped diagnostic line in bridge.log; never includes credentials."""
+    print(f"[claude-usage] {datetime.now().isoformat(timespec='seconds')} {message}",
+          file=sys.stderr, flush=True)
+
+
 class ClaudeUsageState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -295,6 +301,7 @@ class ClaudeUsageState:
         # CodexBar's default prompt policy: after a denied Keychain dialog, only
         # the user's next opt-in may show one again.
         keychain_allowed = True
+        logged_state: str | None = None
         while not stop.is_set():
             if not settings.get().claude_enabled:
                 self.clear("disabled")
@@ -314,6 +321,7 @@ class ClaudeUsageState:
                         if auth_error.code != "login_expired" or time.monotonic() < next_renewal:
                             raise
                         self.clear("renewing")
+                        log_event("login expired; starting Claude /status renewal probe")
                         next_renewal = time.monotonic() + 300
                         def ready() -> bool:
                             if not settings.get().claude_enabled:
@@ -323,13 +331,16 @@ class ClaudeUsageState:
                                 return True
                             except UsageError:
                                 return False
-                        renew_credentials(settings.path.parent / 'claude-probe', stop, ready)
+                        renewed = renew_credentials(settings.path.parent / 'claude-probe', stop, ready)
+                        log_event("renewal probe " + ("restored the login" if renewed else "did not restore the login"))
                         if stop.is_set() or not settings.get().claude_enabled:
                             self.clear('disabled')
                             continue
                         token = read_access_token(allow_keychain=keychain_allowed)
                     identity = hashlib.sha256(token.encode()).hexdigest()
                     if self._account != identity:
+                        if self._account is not None:
+                            log_event("Claude Code credential changed")
                         self.clear("connecting")
                         self._account = identity
                     self.update(fetch_usage(token))
@@ -343,5 +354,11 @@ class ClaudeUsageState:
                 if not settings.get().claude_enabled:
                     self.clear("disabled")
                     forget_keychain_token()
+                # Record transitions (ok, login_required, login_expired, ...) so a
+                # lost login can be matched against what happened at that time.
+                state = self._error or "ok"
+                if state != logged_state:
+                    log_event(f"state {logged_state or 'start'} -> {state}")
+                    logged_state = state
                 next_refresh = time.monotonic() + delay
             stop.wait(1)
