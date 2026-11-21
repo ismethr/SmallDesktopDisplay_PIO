@@ -42,13 +42,18 @@ class DisplayProtocolTests(unittest.TestCase):
     def test_codex_frame_carries_session_and_weekly_windows(self) -> None:
         from types import SimpleNamespace
 
-        usage = SimpleNamespace(valid=True, stale=False, session_remaining_percent=58, remaining_percent=17)
-        self.assertEqual(b"MSA2,580,170,0", split(protocol.encode_codex_frame(usage))[0])
-        no_session = SimpleNamespace(valid=True, stale=True, session_remaining_percent=None, remaining_percent=100)
-        self.assertEqual(b"MSA2,-1,1000,1", split(protocol.encode_codex_frame(no_session))[0])
+        usage = SimpleNamespace(valid=True, stale=False, session_remaining_percent=58, remaining_percent=17,
+                                window_seconds=7 * 86400)
+        self.assertEqual(b"MSA2,580,170,0,7", split(protocol.encode_codex_frame(usage))[0])
+        monthly = SimpleNamespace(valid=True, stale=True, session_remaining_percent=None, remaining_percent=100,
+                                  window_seconds=2592000)
+        self.assertEqual(b"MSA2,-1,1000,1,30", split(protocol.encode_codex_frame(monthly))[0])
+        unknown = SimpleNamespace(valid=True, stale=False, session_remaining_percent=None, remaining_percent=50)
+        self.assertEqual(b"MSA2,-1,500,0,0", split(protocol.encode_codex_frame(unknown))[0])
         # Values held from an earlier refresh are never sent once invalid.
-        invalid = SimpleNamespace(valid=False, stale=False, session_remaining_percent=58, remaining_percent=17)
-        self.assertEqual(b"MSA2,-1,-1,1", split(protocol.encode_codex_frame(invalid))[0])
+        invalid = SimpleNamespace(valid=False, stale=False, session_remaining_percent=58, remaining_percent=17,
+                                  window_seconds=2592000)
+        self.assertEqual(b"MSA2,-1,-1,1,0", split(protocol.encode_codex_frame(invalid))[0])
 
     def test_weather_frame_rejects_foreign_or_oversized_payloads(self) -> None:
         self.assertEqual(b'MSW1,{"city":"x"}', split(protocol.encode_weather_frame(b'MSW1,{"city":"x"}'))[0])

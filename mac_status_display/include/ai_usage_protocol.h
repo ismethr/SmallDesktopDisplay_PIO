@@ -11,6 +11,9 @@ struct QuotaFrame {
   int16_t fiveHourTenths = -1;
   int16_t weekTenths = -1;
   bool stale = true;
+  // Length of the long window in days; 0 when the bridge did not say (older
+  // bridges, and Claude, whose long window is always a week).
+  uint8_t windowDays = 0;
 };
 
 // Kept for code written before Codex gained its own 5-hour frame.
@@ -18,22 +21,24 @@ using ClaudeUsageFrame = QuotaFrame;
 
 inline bool operator==(const QuotaFrame &left, const QuotaFrame &right) {
   return left.fiveHourTenths == right.fiveHourTenths && left.weekTenths == right.weekTenths &&
-         left.stale == right.stale;
+         left.stale == right.stale && left.windowDays == right.windowDays;
 }
 
 inline bool operator!=(const QuotaFrame &left, const QuotaFrame &right) {
   return !(left == right);
 }
 
-// $<prefix>five_hour_remaining10,week_remaining10,stale*CRC16, where prefix is
-// a six-character "$MSAn," tag. Auxiliary frame: older receivers ignore it and
-// it never keeps CPU data live.
+// $<prefix>five_hour_remaining10,week_remaining10,stale[,window_days]*CRC16,
+// where prefix is a six-character "$MSAn," tag and the optional last field is
+// the long window's length in days (0-99). Auxiliary frame: older receivers
+// ignore it and it never keeps CPU data live.
 inline bool parseQuotaFrame(const char *line, const char *prefix, QuotaFrame &output) {
   if (!validAuxFrame(line, prefix)) return false;
   const char *star = verifiedFrameEnd(line);
   const char *cursor = line + strlen(prefix);
-  int32_t values[3] = {};
-  for (size_t index = 0; index < 3; ++index) {
+  int32_t values[4] = {};
+  size_t fields = 0;
+  for (size_t index = 0; index < 4; ++index) {
     char token[6] = {};
     size_t length = 0;
     while (cursor < star && *cursor != ',') {
@@ -41,14 +46,18 @@ inline bool parseQuotaFrame(const char *line, const char *prefix, QuotaFrame &ou
       if ((*cursor < '0' || *cursor > '9') && !(length == 0 && *cursor == '-')) return false;
       token[length++] = *cursor++;
     }
-    if (!parseSigned(token, index == 2 ? 0 : -1, index == 2 ? 1 : 1000, values[index])) return false;
-    if (index < 2) {
-      if (cursor == star || *cursor++ != ',') return false;
-    } else if (cursor != star) return false;
+    const int32_t minimum = index < 2 ? -1 : 0;
+    const int32_t maximum = index < 2 ? 1000 : index == 2 ? 1 : 99;
+    if (!parseSigned(token, minimum, maximum, values[index])) return false;
+    fields = index + 1;
+    if (cursor == star) break;
+    if (index == 3 || *cursor++ != ',') return false;
   }
+  if (fields < 3) return false;
   output.fiveHourTenths = static_cast<int16_t>(values[0]);
   output.weekTenths = static_cast<int16_t>(values[1]);
   output.stale = values[2] != 0;
+  output.windowDays = static_cast<uint8_t>(values[3]);
   return true;
 }
 

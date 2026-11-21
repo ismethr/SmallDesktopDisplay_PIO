@@ -27,7 +27,7 @@ void test_claude_aux_frame_validation() {
   TEST_ASSERT_TRUE(macstatus::parseClaudeUsageFrame(line, frame));
   TEST_ASSERT_EQUAL_INT16(0, frame.fiveHourTenths);
   TEST_ASSERT_EQUAL_INT16(1000, frame.weekTenths);
-  const char *bad[] = {"MSA1,,100,0", "MSA1,1,2,0,0", "MSA1,-2,2,0", "MSA1,1001,2,0",
+  const char *bad[] = {"MSA1,,100,0", "MSA1,1,2,0,7,0", "MSA1,-2,2,0", "MSA1,1001,2,0",
                       "MSA1,1,2,2", "MSA1,+1,2,0", "MSA1, 1,2,0", "MSA1,1,2,", "MSA1,1,2,0,"};
   for (const char *payload : bad) {
     buildFrame(payload, line, sizeof(line));
@@ -53,11 +53,32 @@ void test_codex_aux_frame_shares_validation_but_not_tag() {
   TEST_ASSERT_FALSE(macstatus::parseClaudeUsageFrame(line, frame));
   buildFrame("MSA1,580,170,0", line, sizeof(line));
   TEST_ASSERT_FALSE(macstatus::parseCodexUsageFrame(line, frame));
-  const char *bad[] = {"MSA2,1001,2,0", "MSA2,1,2", "MSA2,1,2,0,0", "MSA2,-2,2,0", "MSA20,1,2,0"};
+  const char *bad[] = {"MSA2,1001,2,0", "MSA2,1,2", "MSA2,1,2,0,7,0", "MSA2,-2,2,0", "MSA20,1,2,0",
+                       "MSA2,1,2,0,100", "MSA2,1,2,0,-1", "MSA2,1,2,0,", "MSA2,1,2,0,+7"};
   for (const char *payload : bad) {
     buildFrame(payload, line, sizeof(line));
     TEST_ASSERT_FALSE(macstatus::parseCodexUsageFrame(line, frame));
   }
+}
+
+void test_quota_frame_optional_window_days() {
+  macstatus::QuotaFrame frame;
+  char line[80];
+  buildFrame("MSA2,-1,1000,0,30", line, sizeof(line));
+  TEST_ASSERT_TRUE(macstatus::parseCodexUsageFrame(line, frame));
+  TEST_ASSERT_EQUAL_INT16(-1, frame.fiveHourTenths);
+  TEST_ASSERT_EQUAL_INT16(1000, frame.weekTenths);
+  TEST_ASSERT_EQUAL_UINT8(30, frame.windowDays);
+  // Without the field (older bridges) the length is unknown.
+  buildFrame("MSA2,580,170,0", line, sizeof(line));
+  TEST_ASSERT_TRUE(macstatus::parseCodexUsageFrame(line, frame));
+  TEST_ASSERT_EQUAL_UINT8(0, frame.windowDays);
+  buildFrame("MSA1,580,170,1,7", line, sizeof(line));
+  TEST_ASSERT_TRUE(macstatus::parseClaudeUsageFrame(line, frame));
+  TEST_ASSERT_EQUAL_UINT8(7, frame.windowDays);
+  macstatus::QuotaFrame other = frame;
+  other.windowDays = 30;
+  TEST_ASSERT_TRUE(frame != other);
 }
 
 void test_crc_standard_vector() {
@@ -285,6 +306,7 @@ int main(int, char **) {
   RUN_TEST(test_crc_standard_vector);
   RUN_TEST(test_claude_aux_frame_validation);
   RUN_TEST(test_codex_aux_frame_shares_validation_but_not_tag);
+  RUN_TEST(test_quota_frame_optional_window_days);
   RUN_TEST(test_clock_crc_bounds_and_no_output_mutation);
   RUN_TEST(test_offline_clock_midnight_wrap_and_resync);
   RUN_TEST(test_calendar_bounds_and_date_rollover);

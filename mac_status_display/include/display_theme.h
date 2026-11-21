@@ -9,9 +9,12 @@ namespace theme {
 // RGB565 palette shared by every status-screen view.
 constexpr uint16_t kBackground = 0x0000;
 constexpr uint16_t kText = 0xFFFF;
-constexpr uint16_t kPanelBorder = 0x5ACB;  // Card outlines and progress-bar tracks.
+constexpr uint16_t kPanelBorder = 0x5ACB;  // Outlines on the offline page and flags.
+// Live page: filled, rounded platters in the style of macOS Control Center.
+constexpr uint16_t kCard = 0x2104;     // #212121 platter fill
+constexpr uint16_t kTrack = 0x4208;    // #424242 progress-bar track and dividers
 constexpr uint16_t kMuted = 0xAD55;
-constexpr uint16_t kUnknownFlag = 0x2104;
+constexpr uint16_t kUnknownFlag = 0x31A6;  // Distinct from the card fill.
 constexpr uint16_t kGreen = 0x4E69;
 constexpr uint16_t kYellow = 0xF5C0;
 constexpr uint16_t kRed = 0xF9E7;

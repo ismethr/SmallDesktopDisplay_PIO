@@ -293,5 +293,6 @@ HTTP 增加 `/v1/claude-usage`，`/v1/overview` 增加 `claude`。USB 增加独�
 
 Codex 的 5 小时窗口取自同一份 app-server 限额（`primary`，最接近 5 小时的短窗口），
 `/v1/codex-usage` 与 `/v1/overview.usage` 增加 `session` 字段（套餐没有短窗口时为 `null`）。
-USB 增加 `$MSA2,five_hour_remaining10,week_remaining10,stale*CRC16`，格式与 `MSA1` 相同；
-`MSD4` 中的 Codex 字段仍为每周余量，旧固件不受影响。
+USB 增加 `$MSA2,five_hour_remaining10,week_remaining10,stale,window_days*CRC16`：前三项与 `MSA1`
+相同，末项是长窗口的天数（0 表示未知），小屏据此把 30 天套餐标成 `MONTH`。固件也接受不带末项的三字段格式；
+早于该字段的固件会拒收四字段的 `MSA2`，此时仍用 `MSD4` 中的 Codex 余量填充，不会出错。

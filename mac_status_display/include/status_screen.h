@@ -15,8 +15,8 @@ class StatusScreen {
  public:
   explicit StatusScreen(TFT_eSPI &tft) : tft_(tft), shown_() {}
 
-  // Clears the panel, draws the card chrome with "--" placeholders and a
-  // WAITING indicator. The next show*() calls repaint every field.
+  // Clears the panel, draws the filled card platters with "--" placeholders and
+  // a WAITING indicator. The next show*() calls repaint every field.
   void drawLayout();
 
   // System metrics and network; the quota cards have their own show*() calls.
@@ -35,11 +35,12 @@ class StatusScreen {
                      uint16_t accent);
   void drawQuotaRow(int16_t x, int16_t y, const char *label, int16_t remainingTenths, bool stale,
                     uint16_t accent);
+  void drawQuotaHero(int16_t x, int16_t remainingTenths, bool stale, uint16_t accent);
   void drawLocation(const char *location, bool stale);
   void drawRates(bool valid, uint32_t download, uint32_t upload);
   void drawProgressBar(int16_t x, int16_t y, int16_t width, int16_t height, int16_t tenths,
                        uint16_t color);
-  void setText(uint8_t font, uint8_t datum, uint16_t color);
+  void setText(uint8_t font, uint8_t datum, uint16_t color, uint16_t background);
 
   static constexpr uint32_t kNoMinute = UINT32_MAX;
 

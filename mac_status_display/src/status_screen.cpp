@@ -18,8 +18,7 @@ namespace {
 // overlaps another text box; tools/status_preview enforces both properties.
 constexpr int16_t kHeaderMidY = 14;
 constexpr Rect kHeaderLeft = {8, 2, 138, 27};
-constexpr Rect kConnection = {148, 4, 84, 22};
-constexpr int16_t kHeaderRuleY = 30;
+constexpr Rect kConnection = {146, 4, 86, 21};
 
 constexpr Rect kSystemCard = {8, 36, 224, 79};
 constexpr int16_t kColumnWidth = 92;
@@ -44,13 +43,18 @@ constexpr int16_t kWeekRowY = 159;
 constexpr int16_t kQuotaValueHeight = 16;  // font 2
 constexpr int16_t kUsageBarHeight = 5;
 constexpr int16_t kUsageInnerWidth = 92;
+// Single-window layout (a plan with only one long window): a large value and a
+// thicker bar, with the window name on the card's title row.
+constexpr int16_t kHeroValueY = 140;
+constexpr int16_t kHeroBarY = 172;
+constexpr int16_t kHeroBarHeight = 6;
 
 constexpr Rect kNetworkCard = {8, 193, 224, 39};
 constexpr int16_t kNetworkLabelY = 198;
 constexpr Rect kLocationArea = {14, 208, 64, 19};
 constexpr Rect kDownloadArea = {86, 208, 67, 19};
 constexpr Rect kUploadArea = {161, 208, 65, 19};
-constexpr int16_t kCornerRadius = 6;
+constexpr int16_t kCornerRadius = 8;
 
 const char *const kWeekdays[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
@@ -58,17 +62,22 @@ void fill(TFT_eSPI &tft, const Rect &area, uint16_t color) {
   tft.fillRect(area.x, area.y, area.width, area.height, color);
 }
 
-void frame(TFT_eSPI &tft, const Rect &area) {
-  tft.drawRoundRect(area.x, area.y, area.width, area.height, kCornerRadius, kPanelBorder);
+// A filled platter, like a Control Center module: no outline, rounded corners.
+void platter(TFT_eSPI &tft, const Rect &area) {
+  tft.fillRoundRect(area.x, area.y, area.width, area.height, kCornerRadius, kCard);
+}
+
+const char *longWindowLabel(const macstatus::QuotaFrame &usage) {
+  return usage.windowDays >= 20 ? "MONTH" : "WEEK";
 }
 
 }  // namespace
 
-void StatusScreen::setText(uint8_t font, uint8_t datum, uint16_t color) {
+void StatusScreen::setText(uint8_t font, uint8_t datum, uint16_t color, uint16_t background) {
   tft_.setTextFont(font);
   tft_.setTextSize(1);
   tft_.setTextDatum(datum);
-  tft_.setTextColor(color, kBackground);
+  tft_.setTextColor(color, background);
 }
 
 void StatusScreen::drawLayout() {
@@ -78,18 +87,17 @@ void StatusScreen::drawLayout() {
   headerDate_ = false;
 
   drawHeader(nullptr);
-  tft_.drawFastHLine(8, kHeaderRuleY, 224, kPanelBorder);
   drawConnection(false);
 
-  frame(tft_, kSystemCard);
-  tft_.drawFastVLine(120, 44, 63, kPanelBorder);
+  platter(tft_, kSystemCard);
+  tft_.drawFastVLine(120, 44, 63, kTrack);
   drawLoad(kCpuX, "CPU", -1);
   drawLoad(kMemoryX, "MEMORY", -1);
   drawTemperature(kCpuX, "CPU", macstatus::kMissingTemperature);
   drawTemperature(kMemoryX, "GPU", macstatus::kMissingTemperature);
 
-  frame(tft_, Rect{kCodexCardX, kUsageCardY, kUsageCardWidth, kUsageCardHeight});
-  frame(tft_, Rect{kClaudeCardX, kUsageCardY, kUsageCardWidth, kUsageCardHeight});
+  platter(tft_, Rect{kCodexCardX, kUsageCardY, kUsageCardWidth, kUsageCardHeight});
+  platter(tft_, Rect{kClaudeCardX, kUsageCardY, kUsageCardWidth, kUsageCardHeight});
   codex_ = macstatus::QuotaFrame();
   drawQuotaCard(kCodexCardX, "CODEX", codex_, kCodex);
   codexDrawn_ = true;
@@ -97,15 +105,15 @@ void StatusScreen::drawLayout() {
   drawQuotaCard(kClaudeCardX, "CLAUDE", claude_, kClaude);
   claudeDrawn_ = true;
 
-  frame(tft_, kNetworkCard);
-  setText(kFontSmall, TL_DATUM, kGreen);
+  platter(tft_, kNetworkCard);
+  setText(kFontSmall, TL_DATUM, kGreen, kCard);
   tft_.drawString("EXIT", 16, kNetworkLabelY);
-  setText(kFontSmall, TL_DATUM, kBlue);
+  setText(kFontSmall, TL_DATUM, kBlue, kCard);
   tft_.drawString("DOWN", 94, kNetworkLabelY);
-  setText(kFontSmall, TL_DATUM, kPurple);
+  setText(kFontSmall, TL_DATUM, kPurple, kCard);
   tft_.drawString("UP", 170, kNetworkLabelY);
-  tft_.drawFastVLine(82, 201, 23, kPanelBorder);
-  tft_.drawFastVLine(157, 201, 23, kPanelBorder);
+  tft_.drawFastVLine(82, 201, 23, kTrack);
+  tft_.drawFastVLine(157, 201, 23, kTrack);
   drawLocation("--", false);
   drawRates(false, 0, 0);
 }
@@ -155,7 +163,7 @@ void StatusScreen::showClock(const macstatus::OfflineClock &clock) {
 void StatusScreen::drawHeader(const macstatus::OfflineClock *clock) {
   fill(tft_, kHeaderLeft, kBackground);
   if (clock == nullptr) {
-    setText(kFontLabel, ML_DATUM, kText);
+    setText(kFontLabel, ML_DATUM, kText, kBackground);
     tft_.drawString("MINIDISPLAY", 10, kHeaderMidY + 1);
     return;
   }
@@ -163,28 +171,31 @@ void StatusScreen::drawHeader(const macstatus::OfflineClock *clock) {
   char text[12];
   snprintf(text, sizeof(text), "%02u:%02u", static_cast<unsigned>(seconds / 3600),
            static_cast<unsigned>(seconds / 60 % 60));
-  setText(kFontValue, TL_DATUM, kText);
+  setText(kFontValue, TL_DATUM, kText, kBackground);
   const int16_t timeWidth = tft_.drawString(text, 10, 3);
   if (!clock->dateValid()) return;
   const macstatus::CivilDate date = macstatus::civilFromDays(clock->days());
   snprintf(text, sizeof(text), "%02u-%02u %s", static_cast<unsigned>(date.month),
            static_cast<unsigned>(date.day), kWeekdays[date.weekday]);
-  setText(kFontSmall, ML_DATUM, kMuted);
+  setText(kFontSmall, ML_DATUM, kMuted, kBackground);
   tft_.drawString(text, 10 + timeWidth + 8, kHeaderMidY);
 }
 
 void StatusScreen::drawConnection(bool live) {
   const uint16_t color = live ? kGreen : kYellow;
+  // A status pill, like the connection badge in the Mac menu-bar popover.
   fill(tft_, kConnection, kBackground);
-  tft_.fillCircle(156, kHeaderMidY, 4, color);
-  setText(kFontSmall, ML_DATUM, color);
-  tft_.drawString(live ? "USB LIVE" : "WAITING", 166, kHeaderMidY);
+  tft_.fillRoundRect(kConnection.x, kConnection.y, kConnection.width, kConnection.height,
+                     kConnection.height / 2, kCard);
+  tft_.fillCircle(kConnection.x + 13, kHeaderMidY, 3, color);
+  setText(kFontSmall, ML_DATUM, color, kCard);
+  tft_.drawString(live ? "USB LIVE" : "WAITING", kConnection.x + 22, kHeaderMidY);
 }
 
 void StatusScreen::drawProgressBar(int16_t x, int16_t y, int16_t width, int16_t height,
                                    int16_t tenths, uint16_t color) {
   const int16_t radius = height / 2;
-  tft_.fillRoundRect(x, y, width, height, radius, kPanelBorder);
+  tft_.fillRoundRect(x, y, width, height, radius, kTrack);
   if (tenths <= 0) return;
   const uint32_t clamped = tenths > 1000 ? 1000U : static_cast<uint32_t>(tenths);
   const int16_t filled = static_cast<int16_t>((static_cast<uint32_t>(width) * clamped) / 1000U);
@@ -192,41 +203,50 @@ void StatusScreen::drawProgressBar(int16_t x, int16_t y, int16_t width, int16_t 
 }
 
 void StatusScreen::drawLoad(int16_t x, const char *label, int16_t tenths) {
-  tft_.fillRect(x, 41, kColumnWidth, 49, kBackground);
-  setText(kFontSmall, TL_DATUM, kMuted);
+  tft_.fillRect(x, 41, kColumnWidth, 49, kCard);
+  setText(kFontSmall, TL_DATUM, kMuted, kCard);
   tft_.drawString(label, x, kLoadLabelY);
   char value[8];
   formatPercent(tenths, value, sizeof(value));
-  setText(kFontValue, TL_DATUM, kText);
+  setText(kFontValue, TL_DATUM, kText, kCard);
   tft_.drawString(value, x, kLoadValueY);
   drawProgressBar(x, kLoadBarY, kColumnWidth, kBarHeight, tenths,
                   tenths < 0 ? kMuted : loadColor(tenths));
 }
 
 void StatusScreen::drawTemperature(int16_t x, const char *label, int16_t tenths) {
-  tft_.fillRect(x, 93, kColumnWidth, 19, kBackground);
-  setText(kFontSmall, ML_DATUM, kMuted);
+  tft_.fillRect(x, 93, kColumnWidth, 19, kCard);
+  setText(kFontSmall, ML_DATUM, kMuted, kCard);
   tft_.drawString(label, x, kTemperatureMidY);
   const bool valid = tenths != macstatus::kMissingTemperature;
   char value[10];
   // Font 2 renders '`' as a degree sign.
   if (valid) snprintf(value, sizeof(value), "%d`C", static_cast<int>((tenths + 5) / 10));
   else snprintf(value, sizeof(value), "--`C");
-  setText(kFontLabel, MR_DATUM, valid ? temperatureColor(tenths) : kMuted);
+  setText(kFontLabel, MR_DATUM, valid ? temperatureColor(tenths) : kMuted, kCard);
   tft_.drawString(value, x + kColumnWidth, kTemperatureMidY);
 }
 
 void StatusScreen::drawQuotaCard(int16_t x, const char *label,
                                  const macstatus::QuotaFrame &usage, uint16_t accent) {
   const bool valid = usage.fiveHourTenths >= 0 || usage.weekTenths >= 0;
-  tft_.fillRect(x + 6, kUsageLabelY - 2, 96, 12, kBackground);
-  setText(kFontSmall, TL_DATUM, accent);
-  tft_.drawString(label, x + 8, kUsageLabelY);
+  // A plan without a 5-hour window gets one large row instead of an empty one.
+  const bool single = usage.fiveHourTenths < 0 && usage.weekTenths >= 0;
+  // Repaint the whole interior: the two layouts do not share text positions.
+  tft_.fillRect(x + 4, kUsageCardY + 2, kUsageCardWidth - 8, kUsageCardHeight - 4, kCard);
   // Freshness marker: accent when live, yellow when cached, grey when missing.
-  tft_.fillCircle(x + 98, kUsageLabelY + 3, 2,
-                  valid ? (usage.stale ? kYellow : accent) : kPanelBorder);
+  tft_.fillCircle(x + 12, kUsageLabelY + 3, 3,
+                  valid ? (usage.stale ? kYellow : accent) : kTrack);
+  setText(kFontSmall, TL_DATUM, accent, kCard);
+  tft_.drawString(label, x + 19, kUsageLabelY);
+  if (single) {
+    setText(kFontSmall, TR_DATUM, kMuted, kCard);
+    tft_.drawString(longWindowLabel(usage), x + 8 + kUsageInnerWidth, kUsageLabelY);
+    drawQuotaHero(x, usage.weekTenths, usage.stale, accent);
+    return;
+  }
   drawQuotaRow(x, kFiveHourRowY, "5H", usage.fiveHourTenths, usage.stale, accent);
-  drawQuotaRow(x, kWeekRowY, "WEEK", usage.weekTenths, usage.stale, accent);
+  drawQuotaRow(x, kWeekRowY, longWindowLabel(usage), usage.weekTenths, usage.stale, accent);
 }
 
 void StatusScreen::drawQuotaRow(int16_t x, int16_t y, const char *label, int16_t remainingTenths,
@@ -235,26 +255,35 @@ void StatusScreen::drawQuotaRow(int16_t x, int16_t y, const char *label, int16_t
   const int16_t left = x + 8;
   const int16_t right = left + kUsageInnerWidth;
   const int16_t valueMidY = y + kQuotaValueHeight / 2;
-  tft_.fillRect(x + 6, y, 96, kQuotaValueHeight + 2 + kUsageBarHeight, kBackground);
-  setText(kFontSmall, ML_DATUM, kMuted);
+  setText(kFontSmall, ML_DATUM, kMuted, kCard);
   tft_.drawString(label, left, valueMidY);
   char value[8];
   formatPercent(remainingTenths, value, sizeof(value));
   const uint16_t live = valid ? quotaColor(remainingTenths, kText) : kMuted;
-  setText(kFontLabel, MR_DATUM, valid && !stale ? live : kMuted);
+  setText(kFontLabel, MR_DATUM, valid && !stale ? live : kMuted, kCard);
   tft_.drawString(value, right, valueMidY);
   const uint16_t barColor = !valid || stale ? kMuted : quotaColor(remainingTenths, accent);
   drawProgressBar(left, y + kQuotaValueHeight + 1, kUsageInnerWidth, kUsageBarHeight,
                   remainingTenths, barColor);
 }
 
+void StatusScreen::drawQuotaHero(int16_t x, int16_t remainingTenths, bool stale, uint16_t accent) {
+  const int16_t left = x + 8;
+  char value[8];
+  formatPercent(remainingTenths, value, sizeof(value));
+  setText(kFontValue, TL_DATUM, stale ? kMuted : quotaColor(remainingTenths, kText), kCard);
+  tft_.drawString(value, left, kHeroValueY);
+  drawProgressBar(left, kHeroBarY, kUsageInnerWidth, kHeroBarHeight, remainingTenths,
+                  stale ? kMuted : quotaColor(remainingTenths, accent));
+}
+
 void StatusScreen::drawLocation(const char *location, bool stale) {
   char country[3];
   char detail[4];
   splitNetworkLocation(location, country, detail);
-  fill(tft_, kLocationArea, kBackground);
+  fill(tft_, kLocationArea, kCard);
   drawCountryFlag(tft_, 15, 211, country, stale);
-  setText(kFontLabel, MC_DATUM, stale ? kMuted : kText);
+  setText(kFontLabel, MC_DATUM, stale ? kMuted : kText, kCard);
   tft_.drawString(detail, 61, 217);
 }
 
@@ -263,10 +292,10 @@ void StatusScreen::drawRates(bool valid, uint32_t download, uint32_t upload) {
   char upText[16];
   formatRate(download, downText, sizeof(downText));
   formatRate(upload, upText, sizeof(upText));
-  fill(tft_, kDownloadArea, kBackground);
-  fill(tft_, kUploadArea, kBackground);
+  fill(tft_, kDownloadArea, kCard);
+  fill(tft_, kUploadArea, kCard);
   // Extreme rates fall back to the 6 px font rather than crossing a column rule.
-  setText(kFontLabel, MC_DATUM, kText);
+  setText(kFontLabel, MC_DATUM, kText, kCard);
   if (tft_.textWidth(downText) > kDownloadArea.width - 2) tft_.setTextFont(kFontSmall);
   tft_.drawString(valid ? downText : "--", 119, 218);
   tft_.setTextFont(kFontLabel);

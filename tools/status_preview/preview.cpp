@@ -43,17 +43,19 @@ void sendStatus(MiniDisplayApp &app, const StatusFrame &frame, uint32_t now) {
   send(app, payload, now);
 }
 
-void sendQuota(MiniDisplayApp &app, const char *tag, int fiveHour, int week, bool stale, uint32_t now) {
+void sendQuota(MiniDisplayApp &app, const char *tag, int fiveHour, int week, bool stale, uint32_t now,
+               int windowDays = -1) {
   send(app, std::string(tag) + "," + std::to_string(fiveHour) + "," + std::to_string(week) + "," +
-                (stale ? "1" : "0"), now);
+                (stale ? "1" : "0") + (windowDays < 0 ? "" : "," + std::to_string(windowDays)), now);
 }
 
 void sendClaude(MiniDisplayApp &app, int fiveHour, int week, bool stale, uint32_t now) {
   sendQuota(app, "MSA1", fiveHour, week, stale, now);
 }
 
-void sendCodex(MiniDisplayApp &app, int fiveHour, int week, bool stale, uint32_t now) {
-  sendQuota(app, "MSA2", fiveHour, week, stale, now);
+void sendCodex(MiniDisplayApp &app, int fiveHour, int week, bool stale, uint32_t now,
+               int windowDays = -1) {
+  sendQuota(app, "MSA2", fiveHour, week, stale, now, windowDays);
 }
 
 void save(const TFT_eSPI &display, const char *name) { display.save(directory + "/" + name + ".ppm"); }
@@ -121,6 +123,13 @@ void renderLiveStates() {
   sendStatus(app, frame, 54500);
   app.tick(54500);
   require(display.writes > before, "display.writes > before");
+
+  // A plan with only a 30-day window: one large MONTH row, then back to two rows.
+  sendCodex(app, -1, 1000, false, 54500, 30);
+  sendClaude(app, 200, 690, false, 54500);
+  save(display, "codex-monthly");
+  require(app.codexUsage().windowDays == 30, "MSA2 carries the window length");
+  sendCodex(app, 580, 170, false, 54500, 7);
 
   for (uint32_t rate : {0U, 1023U, 1024U, 1023488U, 1048575U, 1073741823U, UINT32_MAX}) {
     frame.downloadBytesPerSecond = frame.uploadBytesPerSecond = rate;
@@ -228,6 +237,6 @@ int main(int argc, char **argv) {
     std::cerr << "status preview failed: " << error.what() << "\n";
     return 1;
   }
-  std::cout << "11 real-code previews; bounds, overlap, clock, reconnect and timer checks passed\n";
+  std::cout << "12 real-code previews; bounds, overlap, clock, reconnect and timer checks passed\n";
   return 0;
 }

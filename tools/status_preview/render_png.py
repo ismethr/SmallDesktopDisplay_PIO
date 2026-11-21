@@ -8,7 +8,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 ORDER = (
-    "waiting", "codex-weekly-only", "live", "low-quota", "cached", "missing", "maximum",
+    "waiting", "codex-weekly-only", "live", "codex-monthly", "low-quota", "cached", "missing", "maximum",
     "offline-unsynced", "offline", "midnight", "reconnected",
 )
 SCALE = 2

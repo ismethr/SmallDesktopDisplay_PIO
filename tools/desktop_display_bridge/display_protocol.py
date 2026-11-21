@@ -120,12 +120,20 @@ def encode_claude_frame(usage: Mapping[str, Any]) -> bytes:
 
 
 def encode_codex_frame(usage: Any) -> bytes:
-    """Codex 5-hour and weekly remaining tenths from a ``codex.UsageSnapshot``."""
+    """Codex 5-hour and long-window remaining tenths from a ``codex.UsageSnapshot``.
+
+    The last field is the long window's length in whole days (0 when unknown),
+    so the display can label a 30-day plan MONTH instead of WEEK.
+    """
     def tenths(value: int | None) -> int:
         return MISSING_CODEX_USAGE if value is None or not usage.valid else bounded_tenths(value, 0, 1000)
 
+    seconds = getattr(usage, "window_seconds", None)
+    days = 0
+    if usage.valid and isinstance(seconds, (int, float)) and seconds > 0:
+        days = max(1, min(99, round(seconds / 86400)))
     payload = (f"MSA2,{tenths(usage.session_remaining_percent)},{tenths(usage.remaining_percent)},"
-               f"{int(bool(usage.stale or not usage.valid))}")
+               f"{int(bool(usage.stale or not usage.valid))},{days}")
     return wrap_frame(payload.encode("ascii"))
 
 
