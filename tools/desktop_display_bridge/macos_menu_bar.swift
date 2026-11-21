@@ -280,9 +280,9 @@ enum Format {
         let seconds = Int(timestamp - now.timeIntervalSince1970)
         if seconds <= 0 { return "即将重置" }
         let days = seconds / 86400, hours = seconds % 86400 / 3600, minutes = seconds % 3600 / 60
-        if days > 0 { return "\(days) 天 \(hours) 小时后重置" }
-        if hours > 0 { return "\(hours) 小时 \(minutes) 分后重置" }
-        return "\(max(1, minutes)) 分钟后重置"
+        if days > 0 { return "\(days) 天 \(hours) 小时后" }
+        if hours > 0 { return "\(hours) 小时 \(minutes) 分后" }
+        return "\(max(1, minutes)) 分钟后"
     }
 
     private static let resetDate: DateFormatter = {
@@ -330,23 +330,23 @@ private func loadTint(_ value: Double?) -> Color {
     return value >= 85 ? .red : value >= 65 ? .yellow : .green
 }
 
-private func temperatureTint(_ value: Double?) -> Color {
+private func heatTint(_ value: Double?) -> Color {
     guard let value = value else { return .secondary }
-    return value >= 80 ? .red : value >= 60 ? .orange : .primary
+    return value >= 80 ? .red : value >= 60 ? .orange : .teal
 }
 
 struct MeterBar: View {
     let fraction: Double?
     let tint: Color
-    var height: CGFloat = 4
+    var height: CGFloat = 6
 
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule().fill(.quaternary)
                 if let fraction {
-                    Capsule().fill(tint)
-                        .frame(width: max(0, min(1, fraction)) * proxy.size.width)
+                    Capsule().fill(tint.gradient)
+                        .frame(width: max(height, max(0, min(1, fraction)) * proxy.size.width))
                 }
             }
         }
@@ -355,95 +355,121 @@ struct MeterBar: View {
     }
 }
 
-struct SectionCard<Content: View>: View {
+/// A Control Center style module: a rounded, softly filled platter.
+struct Platter<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
         content
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.fill.quinary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
-/// One compact line: name, bar, percentage and a temperature.
-struct LoadRow: View {
+/// Circular meter with the value in the middle and a caption below.
+struct RingGauge: View {
     let title: String
-    let value: Double?
-    let temperatureTitle: String
-    let temperature: Double?
+    let text: String
+    let fraction: Double?
+    let tint: Color
 
     var body: some View {
-        GridRow {
-            Text(title).foregroundStyle(.secondary)
-            MeterBar(fraction: value.map { $0 / 100 }, tint: loadTint(value))
-            Text(Format.percent(value)).monospacedDigit().gridColumnAlignment(.trailing)
-            Text(temperatureTitle).foregroundStyle(.secondary)
-            Text(Format.temperature(temperature)).monospacedDigit()
-                .foregroundStyle(temperatureTint(temperature))
-                .gridColumnAlignment(.trailing)
+        VStack(spacing: 5) {
+            ZStack {
+                Circle().stroke(.quaternary, lineWidth: 4)
+                if let fraction {
+                    Circle()
+                        .trim(from: 0, to: max(0.001, min(1, fraction)))
+                        .stroke(tint.gradient, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                Text(text)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+                    .padding(.horizontal, 4)
+            }
+            .frame(width: 44, height: 44)
+            .animation(.easeOut(duration: 0.3), value: fraction)
+            Text(title).font(.caption2).foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title) \(text)")
     }
 }
 
-struct QuotaRow: View {
+/// One quota window on a single line: name, bar, percentage, reset time.
+struct QuotaLine: View {
     let title: String
-    let window: QuotaWindow?
+    let window: QuotaWindow
     let accent: Color
     let stale: Bool
-    let weekly: Bool
+    let longWindow: Bool
 
     var body: some View {
-        let remaining = window?.remainingPercent
-        let reset = weekly ? Format.resetDate(window?.resetAt) : Format.countdown(to: window?.resetAt)
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Text(title).foregroundStyle(.secondary).frame(width: 30, alignment: .leading)
-                MeterBar(fraction: remaining.map { $0 / 100 },
-                         tint: stale ? Color.secondary : quotaTint(remaining, accent: accent))
-                Text(Format.percent(remaining))
-                    .fontWeight(.semibold).monospacedDigit()
-                    .foregroundStyle(stale || remaining == nil ? AnyShapeStyle(.secondary)
-                                                               : AnyShapeStyle(quotaTint(remaining, accent: .primary)))
-                    .frame(width: 38, alignment: .trailing)
-            }
-            .font(.callout)
-            Text(reset ?? " ").font(.caption2).foregroundStyle(.tertiary).lineLimit(1).padding(.leading, 36)
+        let remaining = window.remainingPercent
+        let reset = longWindow ? Format.resetDate(window.resetAt) : Format.countdown(to: window.resetAt)
+        HStack(spacing: 8) {
+            Text(title).foregroundStyle(.secondary).frame(width: 40, alignment: .leading)
+            MeterBar(fraction: remaining.map { $0 / 100 },
+                     tint: stale ? Color.secondary : quotaTint(remaining, accent: accent))
+            Text(Format.percent(remaining))
+                .font(.system(.callout, design: .rounded).weight(.semibold)).monospacedDigit()
+                .foregroundStyle(stale || remaining == nil ? AnyShapeStyle(.secondary)
+                                                           : AnyShapeStyle(quotaTint(remaining, accent: .primary)))
+                .frame(width: 40, alignment: .trailing)
+            Text(reset ?? "")
+                .font(.caption).monospacedDigit().foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .frame(width: 92, alignment: .trailing)
         }
-        .help(reset.map { weekly ? "\($0) 重置" : $0 } ?? "")
+        .font(.callout)
+        .help(reset.map { "\($0)重置" } ?? "")
     }
 }
 
-struct QuotaCard: View {
+struct ProviderSection: View {
     let name: String
+    let symbol: String
     let accent: Color
-    let fiveHour: QuotaWindow?
-    let week: QuotaWindow?
+    let windows: [(title: String, window: QuotaWindow, long: Bool)]
     let stale: Bool
     let note: String?
-    var longTitle = "每周"
     var action: (title: String, run: () -> Void)?
 
     var body: some View {
-        SectionCard {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 5) {
-                    Circle().fill(accent).frame(width: 7, height: 7)
-                    Text(name).font(.callout.weight(.semibold))
-                    Spacer()
-                    if stale { Text("上次数据").font(.caption2).foregroundStyle(.orange) }
-                }
-                if let note {
-                    Text(note).font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxHeight: .infinity, alignment: .top)
-                } else {
-                    QuotaRow(title: "5 时", window: fiveHour, accent: accent, stale: stale, weekly: false)
-                    QuotaRow(title: longTitle, window: week, accent: accent, stale: stale, weekly: true)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 18, height: 18)
+                    .background(accent.gradient, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                Text(name).font(.callout.weight(.semibold))
+                Spacer()
+                if stale {
+                    Label("上次数据", systemImage: "clock.arrow.circlepath")
+                        .font(.caption2).foregroundStyle(.orange)
+                        .labelStyle(CompactLabelStyle())
                 }
                 if let action {
-                    Button(action.title, action: action.run).controlSize(.small)
+                    Button(action.title, action: action.run)
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .tint(accent)
+                }
+            }
+            if let note {
+                Text(note).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(windows.indices, id: \.self) { index in
+                    QuotaLine(title: windows[index].title, window: windows[index].window, accent: accent,
+                              stale: stale, longWindow: windows[index].long)
                 }
             }
         }
@@ -454,7 +480,7 @@ private let claudeNotes: [String: String] = [
     "disabled": "未开启，可在设置中连接 Claude 账户额度。",
     "connecting": "正在读取账户额度…",
     "renewing": "正在通过 Claude 官方程序恢复登录…",
-    "login_required": "Claude Code 已退出登录，点下方按钮重新登录。",
+    "login_required": "Claude Code 已退出登录，重新登录后即可读取额度。",
     "login_expired": "登录已过期，使用一次 Claude Code 后会自动恢复。",
     "keychain_denied": "未获准读取钥匙串，请在设置中重新开启并选择“始终允许”。",
     "missing_scope": "当前登录缺少额度读取权限。",
@@ -462,6 +488,30 @@ private let claudeNotes: [String: String] = [
     "network_error": "暂时无法连接 Claude，稍后自动重试。",
     "access_denied": "当前登录无法访问订阅额度。",
 ]
+
+/// Borderless icon button with a hover highlight, like Control Center's footer.
+struct FooterButton: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 28, height: 24)
+                .contentShape(Rectangle())
+                .background(hovering ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(.clear),
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .onHover { hovering = $0 }
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
 
 struct StatusView: View {
     @ObservedObject var model: StatusModel
@@ -473,7 +523,7 @@ struct StatusView: View {
     private var usbLine: (text: String, color: Color) {
         guard model.reachable else { return ("桥接未响应", .red) }
         guard let usb = model.overview?.usb else { return ("正在连接…", .secondary) }
-        if usb.connected == true { return ("USB 已连接", .green) }
+        if usb.connected == true { return ("已连接", .green) }
         switch usb.phase {
         case "connecting": return ("正在建立 USB 连接", .yellow)
         case "retrying": return ("连接中断，正在重试", .orange)
@@ -482,83 +532,129 @@ struct StatusView: View {
         }
     }
 
+    private func temperatureFraction(_ celsius: Double?) -> Double? {
+        celsius.map { ($0 - 20) / 80 }
+    }
+
+    private var codexWindows: [(title: String, window: QuotaWindow, long: Bool)] {
+        guard let codex = model.overview?.usage, codex.ok == true else { return [] }
+        var rows: [(String, QuotaWindow, Bool)] = []
+        if let session = codex.session, session.remainingPercent != nil { rows.append(("5 小时", session, false)) }
+        if codex.remainingPercent != nil {
+            let monthly = (codex.windowSeconds ?? 0) >= 20 * 86400
+            rows.append((monthly ? "每月" : "每周",
+                         QuotaWindow(remainingPercent: codex.remainingPercent, resetAt: codex.resetAt), true))
+        }
+        return rows.map { (title: $0.0, window: $0.1, long: $0.2) }
+    }
+
+    private var claudeWindows: [(title: String, window: QuotaWindow, long: Bool)] {
+        guard let claude = model.overview?.claude, claude.ok == true else { return [] }
+        var rows: [(title: String, window: QuotaWindow, long: Bool)] = []
+        if let five = claude.fiveHour { rows.append((title: "5 小时", window: five, long: false)) }
+        if let week = claude.sevenDay { rows.append((title: "每周", window: week, long: true)) }
+        return rows
+    }
+
     var body: some View {
         let desktop = model.overview?.desktop
         let codex = model.overview?.usage
         let claude = model.overview?.claude
         let location = Format.location(desktop?.networkLocation)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text("MiniDisplay").font(.headline)
-                Circle().fill(usbLine.color).frame(width: 7, height: 7)
-                Text(usbLine.text).font(.caption).foregroundStyle(.secondary)
-                    .help(model.overview?.usb?.port ?? "")
+        VStack(alignment: .leading, spacing: 10) {
+            // Header
+            HStack(spacing: 8) {
+                Image(systemName: "display")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(Color.accentColor.gradient, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("MiniDisplay").font(.headline)
+                    HStack(spacing: 4) {
+                        Circle().fill(usbLine.color).frame(width: 6, height: 6)
+                        Text(usbLine.text)
+                        if model.overview?.usb?.connected == true, let port = model.overview?.usb?.port {
+                            Text("· \(port)").lineLimit(1).truncationMode(.middle)
+                        }
+                    }
+                    .font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
                 if let brightness = desktop?.displayBrightnessPercent {
                     Label("\(brightness)%", systemImage: desktop?.nightMode == true ? "moon.fill" : "sun.max.fill")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(.fill.quaternary, in: Capsule())
                         .help("小屏当前亮度")
                 }
             }
 
-            SectionCard {
-                Grid(horizontalSpacing: 8, verticalSpacing: 6) {
-                    LoadRow(title: "CPU", value: desktop?.cpuPercent,
-                            temperatureTitle: "CPU", temperature: desktop?.cpuTemperatureCelsius)
-                    LoadRow(title: "内存", value: desktop?.memoryPercent,
-                            temperatureTitle: "GPU", temperature: desktop?.gpuTemperatureCelsius)
+            // System
+            Platter {
+                HStack(spacing: 0) {
+                    RingGauge(title: "CPU", text: Format.percent(desktop?.cpuPercent),
+                              fraction: desktop?.cpuPercent.map { $0 / 100 }, tint: loadTint(desktop?.cpuPercent))
+                    RingGauge(title: "内存", text: Format.percent(desktop?.memoryPercent),
+                              fraction: desktop?.memoryPercent.map { $0 / 100 }, tint: loadTint(desktop?.memoryPercent))
+                    RingGauge(title: "CPU 温度", text: Format.temperature(desktop?.cpuTemperatureCelsius),
+                              fraction: temperatureFraction(desktop?.cpuTemperatureCelsius),
+                              tint: heatTint(desktop?.cpuTemperatureCelsius))
+                    RingGauge(title: "GPU 温度", text: Format.temperature(desktop?.gpuTemperatureCelsius),
+                              fraction: temperatureFraction(desktop?.gpuTemperatureCelsius),
+                              tint: heatTint(desktop?.gpuTemperatureCelsius))
                 }
-                .font(.callout)
             }
 
-            HStack(alignment: .top, spacing: 8) {
-                QuotaCard(name: "Codex", accent: .codex,
-                          fiveHour: codex?.ok == true ? codex?.session : nil,
-                          week: codex?.ok == true ? QuotaWindow(remainingPercent: codex?.remainingPercent,
-                                                                 resetAt: codex?.resetAt) : nil,
-                          stale: codex?.stale == true,
-                          note: codex == nil || codex?.ok == true ? nil : "暂未取得余量，请确认 Codex 已登录。",
-                          longTitle: (codex?.windowSeconds ?? 0) >= 20 * 86400 ? "每月" : "每周")
-                QuotaCard(name: "Claude", accent: .claude,
-                          fiveHour: claude?.fiveHour, week: claude?.sevenDay,
-                          stale: claude?.ok == true && claude?.stale == true,
-                          note: claude?.ok == true ? nil : claude?.error.flatMap { claudeNotes[$0] },
-                          action: ["login_required", "login_expired"].contains(claude?.error ?? "")
-                              ? ("重新登录 Claude…", signInClaude) : nil)
+            // Quotas
+            Platter {
+                VStack(alignment: .leading, spacing: 10) {
+                    ProviderSection(name: "Codex", symbol: "chevron.left.forwardslash.chevron.right", accent: .codex,
+                                    windows: codexWindows,
+                                    stale: codex?.stale == true,
+                                    note: codex == nil ? "正在读取…"
+                                        : codex?.ok == true ? (codexWindows.isEmpty ? "暂无额度数据。" : nil)
+                                        : "暂未取得余量，请确认 Codex 已登录。")
+                    Divider()
+                    ProviderSection(name: "Claude", symbol: "sparkle", accent: .claude,
+                                    windows: claudeWindows,
+                                    stale: claude?.ok == true && claude?.stale == true,
+                                    note: claude == nil ? "正在读取…"
+                                        : claude?.ok == true ? nil : claude?.error.flatMap { claudeNotes[$0] },
+                                    action: ["login_required", "login_expired"].contains(claude?.error ?? "")
+                                        ? ("重新登录…", signInClaude) : nil)
+                }
             }
-            .fixedSize(horizontal: false, vertical: true)
 
+            // Network + actions
             HStack(spacing: 10) {
                 Text("\(location.flag) \(location.detail)")
                     .foregroundStyle(desktop?.networkLocationStale == true ? .secondary : .primary)
                     .help("公网出口位置")
-                Spacer()
-                Label(Format.rate(desktop?.downloadBps), systemImage: "arrow.down").foregroundStyle(.blue)
-                Label(Format.rate(desktop?.uploadBps), systemImage: "arrow.up").foregroundStyle(.purple)
+                Label(Format.rate(desktop?.downloadBps), systemImage: "arrow.down.circle.fill")
+                    .foregroundStyle(.blue)
+                Label(Format.rate(desktop?.uploadBps), systemImage: "arrow.up.circle.fill")
+                    .foregroundStyle(.purple)
+                Spacer(minLength: 4)
+                HStack(spacing: 2) {
+                    FooterButton(symbol: "gearshape", help: "设置…", action: openSettings)
+                    FooterButton(symbol: "safari", help: "在浏览器中打开详细页面", action: openDashboard)
+                    FooterButton(symbol: "power", help: "退出 MiniDisplay Bridge", action: quit)
+                }
             }
-            .font(.callout.monospacedDigit())
+            .font(.caption.monospacedDigit())
             .labelStyle(CompactLabelStyle())
-            .padding(.horizontal, 2)
-
-            Divider()
-            HStack(spacing: 14) {
-                Button(action: openSettings) { Label("设置", systemImage: "gearshape") }
-                Button(action: openDashboard) { Label("详细页面", systemImage: "safari") }
-                Spacer()
-                Button("退出", action: quit)
-            }
-            .buttonStyle(.borderless)
-            .font(.callout)
+            .padding(.leading, 4)
         }
         .padding(12)
-        .frame(width: 340)
+        .frame(width: 360)
     }
 }
 
 /// Icon and text with a tight gap, for the one-line network summary.
 struct CompactLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 2) { configuration.icon.imageScale(.small); configuration.title }
+        HStack(spacing: 3) { configuration.icon.imageScale(.small); configuration.title }
     }
 }
 
@@ -665,6 +761,28 @@ final class SettingsModel: ObservableObject {
     }
 }
 
+/// System Settings style row label: a white glyph on a colored rounded square.
+struct SettingIcon: View {
+    let title: String
+    let symbol: String
+    let color: Color
+
+    init(_ title: String, _ symbol: String, _ color: Color) {
+        self.title = title; self.symbol = symbol; self.color = color
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 20, height: 20)
+                .background(color.gradient, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            Text(title)
+        }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
 
@@ -687,7 +805,8 @@ struct SettingsView: View {
         Binding(get: { model.draft![keyPath: keyPath] }, set: { model.draft![keyPath: keyPath] = $0 })
     }
 
-    private func brightness(_ title: String, _ keyPath: WritableKeyPath<DisplaySettings, Int>, help: String) -> some View {
+    private func brightness(_ title: String, _ symbol: String, _ color: Color,
+                            _ keyPath: WritableKeyPath<DisplaySettings, Int>, help: String) -> some View {
         LabeledContent {
             HStack {
                 // Continuous track (no tick marks), snapped to 5 % steps.
@@ -697,7 +816,7 @@ struct SettingsView: View {
                 Text("\(model.draft![keyPath: keyPath])%").monospacedDigit().frame(width: 38, alignment: .trailing)
             }
         } label: {
-            Text(title)
+            SettingIcon(title, symbol, color)
         }
         .help(help)
     }
@@ -710,24 +829,26 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             Form {
                 Section("通用") {
-                    Toggle("登录时自动启动", isOn: $model.launchAtLogin)
+                    Toggle(isOn: $model.launchAtLogin) { SettingIcon("登录时自动启动", "power", .gray) }
                         .help("与“系统设置 → 通用 → 登录项”同步。")
                 }
                 Section("亮度") {
-                    brightness("日间", \.dayBrightness, help: "0% 关闭背光，数据继续更新。")
-                    brightness("夜间上限", \.nightBrightness, help: "夜间时段的上限，不会高于日间亮度。")
-                    brightness("断线上限", \.offlineBrightness, help: "4 秒收不到数据后的上限。")
-                    LabeledContent("夜间时段") {
+                    brightness("日间", "sun.max.fill", .orange, \.dayBrightness, help: "0% 关闭背光，数据继续更新。")
+                    brightness("夜间上限", "moon.fill", .indigo, \.nightBrightness, help: "夜间时段的上限，不会高于日间亮度。")
+                    brightness("断线上限", "cable.connector.slash", .gray, \.offlineBrightness, help: "4 秒收不到数据后的上限。")
+                    LabeledContent {
                         HStack(spacing: 4) {
                             Picker("开始", selection: binding(\.nightStartHour)) { hours }.labelsHidden().fixedSize()
                             Text("至").foregroundStyle(.secondary)
                             Picker("结束", selection: binding(\.nightEndHour)) { hours }.labelsHidden().fixedSize()
                         }
+                    } label: {
+                        SettingIcon("夜间时段", "clock.fill", .purple)
                     }
                     .help("起止相同即关闭夜间调暗，支持跨午夜。")
                 }
                 Section("连接") {
-                    LabeledContent("USB 端口") {
+                    LabeledContent {
                         HStack {
                             Picker("USB 端口", selection: binding(\.serialPort)) {
                                 Text("自动识别").tag(String?.none)
@@ -736,13 +857,17 @@ struct SettingsView: View {
                             .labelsHidden()
                             Button("重新连接") { model.reconnect() }
                         }
+                    } label: {
+                        SettingIcon("USB 端口", "cable.connector", .blue)
                     }
-                    TextField("天气城市代码", text: binding(\.weatherCityCode), prompt: Text("0 为自动识别"))
+                    TextField(text: binding(\.weatherCityCode), prompt: Text("0 为自动识别")) {
+                        SettingIcon("天气城市代码", "cloud.sun.fill", .cyan)
+                    }
                         .help("9 位 weather.com.cn 城市代码，填 0 按 IP 自动识别。")
                 }
                 Section {
-                    Toggle("连接 Claude 账户额度", isOn: binding(\.claudeEnabled))
-                    Toggle("菜单栏显示最低 5 小时余量", isOn: $model.showQuotaInMenuBar)
+                    Toggle(isOn: binding(\.claudeEnabled)) { SettingIcon("连接 Claude 账户额度", "sparkle", .claude) }
+                    Toggle(isOn: $model.showQuotaInMenuBar) { SettingIcon("菜单栏显示最低 5 小时余量", "menubar.rectangle", .green) }
                 } header: {
                     Text("账户额度")
                 } footer: {
