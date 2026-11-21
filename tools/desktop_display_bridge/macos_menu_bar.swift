@@ -6,6 +6,7 @@ import Combine
 import Darwin
 import ServiceManagement
 import SwiftUI
+import UserNotifications
 
 private let showNotification = Notification.Name("io.github.ismethr.SmallDesktopDisplayBridge.show")
 private let menuBarQuotaKey = "ShowQuotaInMenuBar"
@@ -65,6 +66,7 @@ struct Overview: Decodable {
         let ok: Bool?
         let remainingPercent: Double?
         let resetAt: Double?
+        let windowSeconds: Double?
         let session: QuotaWindow?
         let fetchedAt: Double?
         let stale: Bool?
@@ -190,6 +192,14 @@ final class BridgeAPI {
 
     func reconnect(token: String, completion: @escaping (Result<SettingsPayload, Error>) -> Void) {
         post("v1/reconnect", token: token, body: Data("{}".utf8), completion: completion)
+    }
+
+    /// Asks the worker to re-read the Claude login now (rate-limited by the worker).
+    func refreshClaude() {
+        settings { [weak self] result in
+            guard case .success(let payload) = result else { return }
+            self?.post("v1/claude-refresh", token: payload.token, body: Data("{}".utf8)) { _ in }
+        }
     }
 }
 
@@ -412,6 +422,8 @@ struct QuotaCard: View {
     let week: QuotaWindow?
     let stale: Bool
     let note: String?
+    var longTitle = "每周"
+    var action: (title: String, run: () -> Void)?
 
     var body: some View {
         SectionCard {
@@ -428,7 +440,10 @@ struct QuotaCard: View {
                         .frame(maxHeight: .infinity, alignment: .top)
                 } else {
                     QuotaRow(title: "5 时", window: fiveHour, accent: accent, stale: stale, weekly: false)
-                    QuotaRow(title: "每周", window: week, accent: accent, stale: stale, weekly: true)
+                    QuotaRow(title: longTitle, window: week, accent: accent, stale: stale, weekly: true)
+                }
+                if let action {
+                    Button(action.title, action: action.run).controlSize(.small)
                 }
             }
         }
@@ -439,10 +454,12 @@ private let claudeNotes: [String: String] = [
     "disabled": "未开启，可在设置中连接 Claude 账户额度。",
     "connecting": "正在读取账户额度…",
     "renewing": "正在通过 Claude 官方程序恢复登录…",
-    "login_required": "未找到 Claude Code 登录，请先运行一次 claude auth login。",
+    "login_required": "Claude Code 已退出登录，点下方按钮重新登录。",
     "login_expired": "登录已过期，使用一次 Claude Code 后会自动恢复。",
     "keychain_denied": "未获准读取钥匙串，请在设置中重新开启并选择“始终允许”。",
     "missing_scope": "当前登录缺少额度读取权限。",
+    "network_blocked": "Claude 拒绝了当前网络（可能代理未生效），稍后自动重试。",
+    "network_error": "暂时无法连接 Claude，稍后自动重试。",
     "access_denied": "当前登录无法访问订阅额度。",
 ]
 
@@ -451,6 +468,7 @@ struct StatusView: View {
     let openSettings: () -> Void
     let openDashboard: () -> Void
     let quit: () -> Void
+    var signInClaude: () -> Void = {}
 
     private var usbLine: (text: String, color: Color) {
         guard model.reachable else { return ("桥接未响应", .red) }
@@ -499,11 +517,14 @@ struct StatusView: View {
                           week: codex?.ok == true ? QuotaWindow(remainingPercent: codex?.remainingPercent,
                                                                  resetAt: codex?.resetAt) : nil,
                           stale: codex?.stale == true,
-                          note: codex == nil || codex?.ok == true ? nil : "暂未取得余量，请确认 Codex 已登录。")
+                          note: codex == nil || codex?.ok == true ? nil : "暂未取得余量，请确认 Codex 已登录。",
+                          longTitle: (codex?.windowSeconds ?? 0) >= 20 * 86400 ? "每月" : "每周")
                 QuotaCard(name: "Claude", accent: .claude,
                           fiveHour: claude?.fiveHour, week: claude?.sevenDay,
                           stale: claude?.ok == true && claude?.stale == true,
-                          note: claude?.ok == true ? nil : claude?.error.flatMap { claudeNotes[$0] })
+                          note: claude?.ok == true ? nil : claude?.error.flatMap { claudeNotes[$0] },
+                          action: ["login_required", "login_expired"].contains(claude?.error ?? "")
+                              ? ("重新登录 Claude…", signInClaude) : nil)
             }
             .fixedSize(horizontal: false, vertical: true)
 
@@ -750,7 +771,8 @@ struct SettingsView: View {
 
 // MARK: - App shell
 
-final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNUserNotificationCenterDelegate {
+    private var notifiedClaudeLoss = false
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private var settingsWindow: NSWindow?
@@ -796,7 +818,9 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             model: status,
             openSettings: { [weak self] in self?.showSettings() },
             openDashboard: { [weak self] in self?.openDashboard() },
-            quit: { NSApp.terminate(nil) }))
+            quit: { NSApp.terminate(nil) },
+            signInClaude: { [weak self] in self?.signInClaude() }))
+        UNUserNotificationCenter.current().delegate = self
 
         let appMenu = NSMenu()
         let root = NSMenuItem()
@@ -827,7 +851,10 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             signalSources.append(source)
         }
         titleSubscription = status.$overview.receive(on: RunLoop.main).sink { [weak self] _ in
-            DispatchQueue.main.async { self?.updateTitle() }
+            DispatchQueue.main.async {
+                self?.updateTitle()
+                self?.checkClaudeLogin()
+            }
         }
         settings.onMenuBarChange = { [weak self] in self?.menuBarPreferenceChanged() }
         startWorker()
@@ -836,10 +863,75 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func menuBarPreferenceChanged() {
-        if !popover.isShown {
-            if settings.showQuotaInMenuBar { status.poll(every: 30) } else { status.stopPolling() }
-        }
+        // Local-only polling: 1 s while the popover is open (see showStatus),
+        // otherwise often enough for the title and the lost-login notice.
+        if !popover.isShown { status.poll(every: settings.showQuotaInMenuBar ? 30 : 60) }
         updateTitle()
+    }
+
+    // MARK: Claude sign-in
+
+    /// Notifies once each time the Claude Code login is lost, so a blank quota
+    /// card is not discovered a day later.
+    private func checkClaudeLogin() {
+        guard let claude = status.overview?.claude else { return }
+        if claude.ok == true { notifiedClaudeLoss = false; return }
+        guard claude.error == "login_required", !notifiedClaudeLoss else { return }
+        notifiedClaudeLoss = true
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "Claude 额度已暂停"
+            content.body = "Claude Code 已退出登录。点按打开 MiniDisplay，选择“重新登录 Claude…”。"
+            center.add(UNNotificationRequest(identifier: "claude-login-lost", content: content, trigger: nil))
+        }
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        DispatchQueue.main.async { self.showStatus() }
+        completionHandler()
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+
+    /// Opens Terminal with Claude Code's own `auth login` (the user completes it
+    /// in the browser), then asks the worker to re-read the login a few times.
+    private func signInClaude() {
+        popover.performClose(nil)
+        let script = support.appendingPathComponent("claude-login.command")
+        let body = """
+        #!/bin/zsh
+        # Written by MiniDisplay Bridge: signs Claude Code in again so quotas can be read.
+        claude_bin=""
+        for candidate in "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude; do
+          [[ -x "$candidate" ]] && claude_bin="$candidate" && break
+        done
+        if [[ -z "$claude_bin" ]]; then
+          claude_bin=$(ls -d "$HOME/Library/Application Support/Claude/claude-code"/*/*/claude.app/Contents/MacOS/claude 2>/dev/null | sort -V | tail -1)
+        fi
+        if [[ -z "$claude_bin" ]]; then
+          echo "未找到 Claude Code。请先安装 Claude 桌面版或 Claude Code。"
+          exit 1
+        fi
+        echo "正在登录 Claude Code，浏览器会打开授权页面…"
+        "$claude_bin" auth login && echo "\n登录完成，可以关闭此窗口。MiniDisplay 会在一分钟内读取额度。"
+        """
+        do {
+            try body.write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        } catch {
+            showError("无法准备登录脚本：\(error.localizedDescription)")
+            return
+        }
+        NSWorkspace.shared.open(script)
+        for delay in [20.0, 50.0, 90.0, 150.0, 240.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.api.refreshClaude() }
+        }
     }
 
     private func updateTitle() {

@@ -214,6 +214,21 @@ def parse_window(value: Any, now: float) -> dict[str, Any] | None:
     return {"remaining_percent": round(100 - used, 1), "reset_at": reset}
 
 
+def _is_network_block(error: urllib.error.HTTPError) -> bool:
+    """True unless a 403 body is Anthropic's JSON permission/auth error.
+
+    A region block ("Request not allowed") or a Cloudflare HTML page means
+    the request left through the wrong network, not that the login is bad.
+    The body is only inspected here and never stored or logged.
+    """
+    try:
+        body = json.loads(error.read(MAX_BYTES))
+        kind = body.get("error", {}).get("type") if isinstance(body, dict) else None
+    except (OSError, ValueError, AttributeError):
+        return True
+    return kind not in ("permission_error", "authentication_error")
+
+
 def fetch_usage(token: str) -> dict[str, Any]:
     request = urllib.request.Request(USAGE_URL, headers={
         "Authorization": "Bearer " + token, "anthropic-beta": "oauth-2025-04-20",
@@ -231,7 +246,12 @@ def fetch_usage(token: str) -> dict[str, Any]:
         return data
     except urllib.error.HTTPError as exc:
         retry_after = (exc.headers or {}).get("Retry-After")
+        blocked = exc.code == 403 and _is_network_block(exc)
         exc.close()
+        if exc.code == 403 and blocked:
+            # Region/Cloudflare blocks come and go with the proxy; keep the
+            # last quota (as stale) instead of treating the login as revoked.
+            raise UsageError("network_blocked") from None
         if exc.code in (401, 403):
             raise UsageError("login_expired" if exc.code == 401 else "access_denied") from None
         if exc.code == 429:
@@ -239,6 +259,25 @@ def fetch_usage(token: str) -> dict[str, Any]:
         raise UsageError("service_unavailable") from None
     except (OSError, ValueError, urllib.error.URLError):
         raise UsageError("network_error") from None
+
+
+def anthropic_reachable(timeout: float = 5) -> bool:
+    """Unauthenticated probe: the usage endpoint answers 401 when Anthropic is
+    reachable through the current network; anything else means the proxy or
+    network is not ready, so asking Claude Code to renew would only fail."""
+    request = urllib.request.Request(USAGE_URL, headers={"User-Agent": "claude-code/2.1.0"})
+    try:
+        with urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout):
+            return True
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        return exc.code == 401
+    except (OSError, ValueError):
+        return False
+
+
+RENEWAL_BACKOFF_SECONDS = (300, 600, 1200, 2400, 3600)
+MANUAL_REFRESH_GAP_SECONDS = 30
 
 
 def log_event(message: str) -> None:
@@ -254,6 +293,19 @@ class ClaudeUsageState:
         self._fetched_at: float | None = None
         self._error: str | None = "disabled"
         self._account: str | None = None
+        self._refresh_now = threading.Event()
+        self._last_manual_refresh = -MANUAL_REFRESH_GAP_SECONDS
+
+    def request_refresh(self) -> bool:
+        """Ask the worker to re-read the login now (e.g. right after the user
+        signed in again). Ignored within 30 s of the previous request."""
+        now = time.monotonic()
+        with self._lock:
+            if now - self._last_manual_refresh < MANUAL_REFRESH_GAP_SECONDS:
+                return False
+            self._last_manual_refresh = now
+        self._refresh_now.set()
+        return True
 
     def clear(self, error: str) -> None:
         with self._lock:
@@ -263,7 +315,9 @@ class ClaudeUsageState:
             self._account = None
 
     def set_error(self, error: str) -> None:
-        if error in {"login_required", "login_expired", "access_denied", "disabled", "missing_scope", "keychain_denied"}:
+        # An expired token is still the same account, and its windows expire at
+        # their own reset times, so it keeps cached data (marked stale).
+        if error in {"login_required", "access_denied", "disabled", "missing_scope", "keychain_denied"}:
             self.clear(error)
         else:
             with self._lock:
@@ -298,6 +352,7 @@ class ClaudeUsageState:
     def run(self, settings, stop: threading.Event) -> None:
         next_refresh = 0.0
         next_renewal = 0.0
+        renewal_failures = 0
         # CodexBar's default prompt policy: after a denied Keychain dialog, only
         # the user's next opt-in may show one again.
         keychain_allowed = True
@@ -308,7 +363,12 @@ class ClaudeUsageState:
                 forget_keychain_token()
                 keychain_allowed = True
                 next_refresh = 0.0
-            elif time.monotonic() >= next_refresh:
+            elif time.monotonic() >= next_refresh or self._refresh_now.is_set():
+                if self._refresh_now.is_set():
+                    # A user-requested re-read also lifts the renewal backoff.
+                    self._refresh_now.clear()
+                    next_renewal = 0.0
+                    renewal_failures = 0
                 delay = REFRESH_SECONDS
                 try:
                     try:
@@ -320,9 +380,12 @@ class ClaudeUsageState:
                             raise UsageError("keychain_denied") from None
                         if auth_error.code != "login_expired" or time.monotonic() < next_renewal:
                             raise
-                        self.clear("renewing")
+                        if not anthropic_reachable():
+                            # Not a lost login: wait for the network without
+                            # spending a renewal attempt or clearing the screen.
+                            raise UsageError("network_error") from None
+                        self.set_error("renewing")
                         log_event("login expired; starting Claude /status renewal probe")
-                        next_renewal = time.monotonic() + 300
                         def ready() -> bool:
                             if not settings.get().claude_enabled:
                                 return True  # Stop the private probe immediately after opting out.
@@ -332,7 +395,15 @@ class ClaudeUsageState:
                             except UsageError:
                                 return False
                         renewed = renew_credentials(settings.path.parent / 'claude-probe', stop, ready)
-                        log_event("renewal probe " + ("restored the login" if renewed else "did not restore the login"))
+                        if renewed:
+                            renewal_failures = 0
+                            next_renewal = 0.0
+                            log_event("renewal probe restored the login")
+                        else:
+                            backoff = RENEWAL_BACKOFF_SECONDS[min(renewal_failures, len(RENEWAL_BACKOFF_SECONDS) - 1)]
+                            renewal_failures += 1
+                            next_renewal = time.monotonic() + backoff
+                            log_event(f"renewal probe did not restore the login; next attempt in {backoff // 60} min")
                         if stop.is_set() or not settings.get().claude_enabled:
                             self.clear('disabled')
                             continue

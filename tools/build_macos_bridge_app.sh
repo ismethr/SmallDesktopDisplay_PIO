@@ -80,7 +80,7 @@ compile_menu_helper() {
   xcrun --sdk macosx swiftc -O -swift-version 5 \
     -target "${architecture}-apple-macosx15.0" \
     -module-cache-path "${build_root}/swift-module-cache" \
-    "${menu_source}" -framework AppKit -framework SwiftUI -framework ServiceManagement -o "${output}"
+    "${menu_source}" -framework AppKit -framework SwiftUI -framework ServiceManagement -framework UserNotifications -o "${output}"
 }
 
 if ! command -v xcrun >/dev/null 2>&1; then

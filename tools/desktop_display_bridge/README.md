@@ -34,6 +34,8 @@ macOS App 的正式名称是 **MiniDisplay Bridge（迷你屏桥接）**。发�
 ~/Library/Logs/SmallDesktopDisplay/bridge.log
 ```
 
+日志超过 1 MB 自动轮换（保留 `bridge.log.1`–`.3`），连续相同的行合并为一条“重复 N 次”记录；Claude 额度状态变化、续期探测结果都带时间戳记录，不含任何令牌。
+
 可在浏览器打开 [本机状态页面](http://127.0.0.1:8766/)，查看 USB 连接、CPU/内存、温度、网速、出口位置以及 Codex 余量和更新时间。页面每秒自动刷新，宽窗口并排显示，窄窗口自动单列排列；“刷新状态”只重新读取本机数据，不会额外请求 Codex 或位置服务。原有 `/health` 诊断接口继续保留。
 
 要开机自动运行，打开“设置…”开启“登录时自动启动”，或在右键菜单中勾选同名项。它使用系统登录项（`SMAppService`），与“系统设置 → 通用 → 登录项”同步，任一处都可关闭；请先把 App 放到“应用程序”文件夹再开启。要停止可右键菜单栏图标并选择“退出 MiniDisplay Bridge”。
@@ -266,6 +268,7 @@ Claude Code 登录同一 Claude 账号；首次需要登录时使用官方 `clau
 - 请求 `https://api.anthropic.com/api/oauth/usage`，保留所需 OAuth beta 请求头。
   `five_hour` 与 `seven_day` 各自独立处理；缺失窗口显示 `--`，不会把花费或上下文余量当成订阅额度。
 - 每 300 秒查询，429 尊重秒数或 HTTP 日期形式的 `Retry-After`，300–3600 秒退避；超过 660 秒未更新的数据标为陈旧。
+  403 只有在返回 Anthropic 的权限/认证错误时才视为账号问题；地区拦截或 Cloudflare 页面视为网络问题（`network_blocked`），保留上次数据。令牌过期期间同样保留同一账号的上次数据。
   网络故障保留有时间标记的上次数据，重置时间到达后清空旧窗口；认证失败清空账户缓存。
 - Windows 登录过期时最多每 5 分钟启动一次官方 Claude `/status`，限时 12 秒。
   通过 ConPTY 隐藏运行于专用目录，禁用工具、MCP、用户/项目设置、Hooks、Remote Control
@@ -273,6 +276,8 @@ Claude Code 登录同一 Claude 账号；首次需要登录时使用官方 `clau
   才继续查询，续期不成功时提示用户重新登录。Bridge 从不写 Claude 的凭据或自行兑换 refresh token。
 - 支持标准 Claude 安装和 Windows 商店版 Claude 内置程序路径。
   macOS 登录过期时以同样限制在伪终端运行 `/status`，让 Claude Code 自行续期并写回钥匙串。
+  探测前先确认 Anthropic 可达（代理未就绪时不浪费续期机会），失败后按 5、10、20、40、60 分钟退避。
+  登录真正丢失时发送一次系统通知；菜单栏浮层提供“重新登录 Claude…”，在终端运行 Claude Code 自带的 `auth login`，完成后经本机 `/v1/claude-refresh` 立即重读。
   依次查找 PATH、`~/.local/bin`、Homebrew 与 Claude 桌面版自带的
   `~/Library/Application Support/Claude/claude-code/<版本>/…/claude.app`。
   桌面版的 Code 登录不写入钥匙串；只用桌面版时需先用其自带程序执行一次 `claude auth login`。

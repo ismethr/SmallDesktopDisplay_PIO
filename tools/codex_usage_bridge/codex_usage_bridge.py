@@ -350,6 +350,9 @@ def parse_app_server_rate_limits(
     return parse_usage_response({"rate_limits": normalized}, now=now)
 
 
+SYSTEM_APPLICATION_ROOTS = (Path("/Applications"),)
+
+
 def find_codex_binary(override: Path | None = None) -> Path | None:
     """Locate the Codex binary without reading or copying its credentials."""
     if override is not None:
@@ -366,9 +369,12 @@ def find_codex_binary(override: Path | None = None) -> Path | None:
     if on_path:
         return Path(on_path)
 
-    candidates = (
-        Path("/Applications/ChatGPT.app/Contents/Resources/codex"),
-        Path.home() / "Applications/ChatGPT.app/Contents/Resources/codex",
+    # ChatGPT.app moved its bundled CLI into Resources/codex-cli/bin (2026-11);
+    # keep the older location for earlier app versions.
+    candidates = tuple(
+        root / "ChatGPT.app/Contents/Resources" / relative
+        for root in (*SYSTEM_APPLICATION_ROOTS, Path.home() / "Applications")
+        for relative in ("codex-cli/bin/codex", "codex")
     )
     return next((candidate for candidate in candidates if candidate.is_file()), None)
 

@@ -71,12 +71,19 @@ class ClaudeUsageTests(unittest.TestCase):
         self.assertTrue(state.get(NOW + claude.STALE_SECONDS + 1)["stale"])
 
     def test_logout_and_disabled_clear_previous_account(self):
-        for code in ("login_required", "login_expired", "access_denied", "disabled"):
+        for code in ("login_required", "access_denied", "disabled"):
             state = claude.ClaudeUsageState()
             state.update(DATA, NOW)
             state.set_error(code)
             self.assertFalse(state.get(NOW)["ok"])
             self.assertIsNone(state.get(NOW)["fetched_at"])
+        # Expired tokens and network blocks keep the same account's last quota.
+        for code in ("login_expired", "network_blocked", "renewing"):
+            state = claude.ClaudeUsageState()
+            state.update(DATA, NOW)
+            state.set_error(code)
+            self.assertTrue(state.get(NOW)["ok"])
+            self.assertTrue(state.get(NOW)["stale"])
 
     def test_snapshot_is_not_mutable_by_http_consumer(self):
         state = claude.ClaudeUsageState()
@@ -129,9 +136,13 @@ class ClaudeUsageTests(unittest.TestCase):
         self.assertIsNone(handler.redirect_request(request, None, 302, '', {}, 'https://example.com'))
 
     def test_error_body_does_not_reach_public_snapshot(self):
-        for status, code in ((401, 'login_expired'), (403, 'access_denied'), (429, 'rate_limited'), (500, 'service_unavailable')):
+        permission = json.dumps({"type": "error", "error": {"type": "permission_error", "message": "secret"}}).encode()
+        region = json.dumps({"error": {"type": "forbidden", "message": "Request not allowed"}}).encode()
+        for status, body, code in ((401, b'secret', 'login_expired'), (403, permission, 'access_denied'),
+                                   (403, region, 'network_blocked'), (403, b'<html>secret</html>', 'network_blocked'),
+                                   (429, b'secret', 'rate_limited'), (500, b'secret', 'service_unavailable')):
             with mock.patch.object(claude.urllib.request, 'build_opener') as opener:
-                opener.return_value.open.side_effect = urllib.error.HTTPError(claude.USAGE_URL, status, 'secret', {'Retry-After': '600'}, io.BytesIO(b'secret'))
+                opener.return_value.open.side_effect = urllib.error.HTTPError(claude.USAGE_URL, status, 'secret', {'Retry-After': '600'}, io.BytesIO(body))
                 with self.assertRaises(claude.UsageError) as error:
                     claude.fetch_usage('test-only')
                 self.assertEqual(code, str(error.exception))
@@ -183,6 +194,7 @@ class ClaudeUsageTests(unittest.TestCase):
             return DATA
         with mock.patch.object(claude, 'read_access_token', side_effect=[claude.UsageError('login_expired'), 'renewed-test-token']), \
              mock.patch.object(claude, 'renew_credentials', return_value=True) as renew, \
+             mock.patch.object(claude, 'anthropic_reachable', return_value=True), \
              mock.patch.object(claude, 'fetch_usage', side_effect=fetch), \
              mock.patch.object(claude.time, 'time', return_value=NOW):
             state.run(settings, stop)
@@ -196,6 +208,7 @@ class ClaudeUsageTests(unittest.TestCase):
         settings = SimpleNamespace(path=Path('unused/settings.json'), get=lambda: DisplaySettings(claude_enabled=True))
         with mock.patch.object(claude, 'read_access_token', side_effect=claude.UsageError('login_expired')), \
              mock.patch.object(claude, 'renew_credentials', return_value=False), \
+             mock.patch.object(claude, 'anthropic_reachable', return_value=True), \
              mock.patch.object(claude, 'fetch_usage') as fetch:
             state.run(settings, stop)
         fetch.assert_not_called()
@@ -238,6 +251,50 @@ class ClaudeUsageTests(unittest.TestCase):
         self.assertTrue(any(line.endswith('state start -> login_required') for line in lines), lines)
         self.assertTrue(any(line.endswith('state login_required -> ok') for line in lines), lines)
         self.assertNotIn('secret-test-token', log.getvalue())
+
+    def test_unreachable_network_skips_renewal_and_keeps_data(self):
+        stop = mock.Mock()
+        stop.is_set.side_effect = [False, False, True]
+        settings = SimpleNamespace(path=Path('unused/settings.json'), get=lambda: DisplaySettings(claude_enabled=True))
+        state = claude.ClaudeUsageState()
+        state.update(DATA, NOW)
+        with mock.patch.object(claude, 'read_access_token', side_effect=claude.UsageError('login_expired')), \
+             mock.patch.object(claude, 'anthropic_reachable', return_value=False), \
+             mock.patch.object(claude, 'renew_credentials') as renew, \
+             mock.patch.object(claude.time, 'time', return_value=NOW):
+            state.run(settings, stop)
+        renew.assert_not_called()
+        self.assertEqual('network_error', state.get(NOW)['error'])
+        self.assertTrue(state.get(NOW)['ok'])
+
+    def test_failed_renewals_back_off_and_success_resets(self):
+        clock = [0.0]
+        attempts = []
+        stop = threading.Event()
+        results = [False, False, False, True]
+        settings = SimpleNamespace(path=Path('unused/settings.json'), get=lambda: DisplaySettings(claude_enabled=True))
+
+        def renew(*_args):
+            attempts.append(clock[0])
+            if len(attempts) == len(results):
+                stop.set()
+            return results[len(attempts) - 1]
+
+        def wait(seconds):
+            clock[0] += seconds
+            return stop.is_set()
+
+        with mock.patch.object(claude, 'read_access_token', side_effect=claude.UsageError('login_expired')), \
+             mock.patch.object(claude, 'anthropic_reachable', return_value=True), \
+             mock.patch.object(claude, 'renew_credentials', side_effect=renew), \
+             mock.patch.object(claude.time, 'monotonic', side_effect=lambda: clock[0]), \
+             mock.patch.object(claude.time, 'time', return_value=NOW), \
+             mock.patch.object(claude.sys, 'stderr', new_callable=io.StringIO), \
+             mock.patch.object(stop, 'wait', side_effect=wait):
+            claude.ClaudeUsageState().run(settings, stop)
+        gaps = [later - earlier for earlier, later in zip(attempts, attempts[1:])]
+        # 5, 10 and 20 minutes between attempts (rounded up to the 5-minute poll).
+        self.assertEqual([300, 600, 1200], [round(gap / 300) * 300 for gap in gaps])
 
 def keychain_document(token="keychain-test-token", expires=NOW + 3600, scopes=("user:profile",)):
     return json.dumps({"claudeAiOauth": {"accessToken": token, "expiresAt": expires * 1000,

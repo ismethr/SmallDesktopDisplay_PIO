@@ -367,5 +367,23 @@ class BridgeTests(unittest.TestCase):
         server.server_close()
 
 
+class CodexBinaryDiscoveryTests(unittest.TestCase):
+    def test_finds_cli_bundled_in_current_and_older_chatgpt_layouts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(bridge, "SYSTEM_APPLICATION_ROOTS", (Path(directory),)), \
+                mock.patch.object(bridge.Path, "home", return_value=Path(directory) / "home"), \
+                mock.patch.object(bridge.shutil, "which", return_value=None), \
+                mock.patch.dict(bridge.os.environ, {"CODEX_BRIDGE_CODEX_BINARY": ""}):
+            resources = Path(directory) / "ChatGPT.app/Contents/Resources"
+            self.assertIsNone(bridge.find_codex_binary())
+            legacy = resources / "codex"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text("")
+            self.assertEqual(legacy, bridge.find_codex_binary())
+            current = resources / "codex-cli/bin/codex"
+            current.parent.mkdir(parents=True)
+            current.write_text("")
+            self.assertEqual(current, bridge.find_codex_binary())
+
 if __name__ == "__main__":
     unittest.main()

@@ -384,6 +384,32 @@ class DesktopDisplayBridgeTests(unittest.TestCase):
                 macos_bridge_launcher.log_directory(),
             )
 
+    def test_macos_log_collapses_repeats_and_rotates(self) -> None:
+        if macos_bridge_launcher is None:
+            self.skipTest("macOS launcher is not importable on Windows")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bridge.log"
+            log = macos_bridge_launcher.RotatingLog(path, max_bytes=400, kept=2)
+            for _ in range(5):
+                print("[codex-bridge] Codex usage request failed: timed out", file=log)
+            print("[desktop-bridge] USB display connected", file=log, flush=True)
+            log.flush()
+            lines = path.read_text().splitlines()
+            self.assertEqual("[codex-bridge] Codex usage request failed: timed out", lines[0])
+            self.assertIn("repeated 4 more times", lines[1])
+            self.assertEqual("[desktop-bridge] USB display connected", lines[2])
+            for index in range(40):
+                print(f"line {index:02d} " + "x" * 30, file=log)
+            log.close()
+            self.assertTrue(path.with_name("bridge.log.1").exists())
+            self.assertTrue(path.with_name("bridge.log.2").exists())
+            self.assertFalse(path.with_name("bridge.log.3").exists())
+            self.assertLess(path.stat().st_size, 400 + 60)
+            # A log that is already too large is rotated at startup.
+            path.write_text("y" * 500)
+            macos_bridge_launcher.RotatingLog(path, max_bytes=400, kept=2).close()
+            self.assertEqual(0, path.stat().st_size)
+
     def test_macos_launcher_lock_rejects_second_instance(self) -> None:
         if macos_bridge_launcher is None:
             self.skipTest("macOS launcher is not importable on Windows")
@@ -402,10 +428,11 @@ class DesktopDisplayBridgeTests(unittest.TestCase):
 
 class DisplaySettingsTests(unittest.TestCase):
     @contextmanager
-    def settings_server(self):
+    def settings_server(self, claude_state=None):
         with tempfile.TemporaryDirectory() as directory:
             settings = bridge.SettingsState(Path(directory) / "settings.json")
-            handler = bridge.make_handler(bridge.codex.UsageState(), bridge.DesktopStatusState(), bridge.UsbState(), settings)
+            handler = bridge.make_handler(bridge.codex.UsageState(), bridge.DesktopStatusState(), bridge.UsbState(),
+                                          settings, claude_state)
             server = bridge.codex.BridgeHTTPServer(("127.0.0.1", 0), handler)
             worker = threading.Thread(target=server.serve_forever, daemon=True)
             worker.start()
@@ -507,6 +534,18 @@ class DisplaySettingsTests(unittest.TestCase):
             self.assertEqual(200, self.request(port, "POST", "/v1/reconnect", {}, headers)[0])
             self.assertEqual(generation + 1, settings.connection()[1])
             self.assertEqual(1, settings.public()["revision"])
+
+    def test_http_claude_refresh_requires_token_and_is_rate_limited(self):
+        claude_state = bridge.ClaudeUsageState()
+        with self.settings_server(claude_state) as (settings, port):
+            self.assertEqual(403, self.request(port, "POST", "/v1/claude-refresh", {}, {})[0])
+            self.assertFalse(claude_state._refresh_now.is_set())
+            headers = {"X-MiniDisplay-Token": settings.token}
+            self.assertEqual(400, self.request(port, "POST", "/v1/claude-refresh", {"x": 1}, headers)[0])
+            self.assertEqual(200, self.request(port, "POST", "/v1/claude-refresh", {}, headers)[0])
+            self.assertTrue(claude_state._refresh_now.is_set())
+            claude_state._refresh_now.clear()
+            self.assertFalse(claude_state.request_refresh())  # within 30 s
 
     def test_http_rejects_unknown_ports_and_invalid_bodies(self):
         with self.settings_server() as (settings, port):

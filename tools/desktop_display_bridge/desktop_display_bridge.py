@@ -1001,7 +1001,7 @@ def make_handler(
         def do_POST(self) -> None:  # noqa: N802
             self.close_connection = True
             path = self.path.split("?", 1)[0]
-            if settings_state is None or path not in {"/v1/settings", "/v1/reconnect"}:
+            if settings_state is None or path not in {"/v1/settings", "/v1/reconnect", "/v1/claude-refresh"}:
                 self._send_json({"ok": False, "error": "not found"}, HTTPStatus.NOT_FOUND)
                 return
             if not self._local_request() or not secrets.compare_digest(
@@ -1025,6 +1025,11 @@ def make_handler(
                     if body:
                         raise ValueError("重连请求不能包含额外参数")
                     settings_state.reconnect()
+                elif path == "/v1/claude-refresh":
+                    if body:
+                        raise ValueError("刷新请求不能包含额外参数")
+                    if claude_state is not None:
+                        claude_state.request_refresh()
                 else:
                     if set(body) != {"revision", "settings"} or not isinstance(body["settings"], dict):
                         raise ValueError("设置请求格式无效")

@@ -189,7 +189,7 @@ footer { display: flex; justify-content: space-between; gap: 16px; margin-top: 2
       <div class="value"><span id="codex-five">--</span><span class="unit">%</span></div>
       <div class="bar" id="codex-five-bar"><span></span></div>
       <p class="caption" id="codex-five-reset">等待账户数据</p>
-      <div class="secondary"><span>每周余量<small id="usage-reset">--</small></span><b><span id="usage">--</span>%</b></div>
+      <div class="secondary"><span><span id="usage-window">每周余量</span><small id="usage-reset">--</small></span><b><span id="usage">--</span>%</b></div>
       <div class="bar thin" id="usage-bar"><span></span></div>
       <div class="notes"><p id="usage-detail">读取当前登录账号的 5 小时与每周限额。</p></div>
     </section>
@@ -311,6 +311,7 @@ const claudeErrors = {
   access_denied: '当前登录无法访问订阅额度，请核对 Claude 账号和套餐。',
   rate_limited: 'Claude 暂时限制查询频率，稍后自动重试。',
   network_error: '暂时无法连接 Claude，稍后自动重试。',
+  network_blocked: 'Claude 拒绝了当前网络（可能代理未生效），保留上次数据并自动重试。',
   service_unavailable: 'Claude 额度服务暂不可用，稍后自动重试。',
   invalid_response: '暂时无法识别 Claude 的额度数据。',
   no_quota: '当前账号没有可显示的订阅额度。',
@@ -329,6 +330,8 @@ function renderCodex(u) {
   setBar('usage-bar', u.ok ? u.remaining_percent : null, {stale: !!u.stale});
   text('codex-five-reset', five ? (five.reset_at ? '下次重置 ' + moment(five.reset_at) + ' · 剩 ' + countdown(five.reset_at) : '当前时段尚未开始') : u.ok ? '当前套餐没有 5 小时窗口' : '5 小时窗口暂无数据');
   text('usage-reset', u.ok && u.reset_at ? '重置于 ' + moment(u.reset_at) : '--');
+  // Plans may expose a monthly window instead of a weekly one.
+  text('usage-window', u.ok && u.window_seconds >= 20 * 86400 ? '每月余量' : '每周余量');
   text('usage-detail', (u.ok ? (u.stale ? '更新暂不可用，保留上次余量。' : '限额已同步，小屏同时显示。') : '暂未取得余量，请确认 Codex 已登录且网络可用。') + (u.ok && u.fetched_at ? '更新于 ' + moment(u.fetched_at) : ''));
 }
 

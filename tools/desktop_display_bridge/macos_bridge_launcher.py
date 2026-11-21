@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import fcntl
+import io
 import os
 import platform
 import sys
+import threading
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +17,8 @@ from typing import IO, TextIO
 
 APP_DIRECTORY_NAME = "SmallDesktopDisplay"
 LOCK_FILE_NAME = "bridge.lock"
+MAX_LOG_BYTES = 1_000_000
+KEPT_LOGS = 3
 
 
 def application_support_directory() -> Path:
@@ -25,11 +29,84 @@ def log_directory() -> Path:
     return Path.home() / "Library" / "Logs" / APP_DIRECTORY_NAME
 
 
+class RotatingLog(io.TextIOBase):
+    """Line-oriented log stream shared by every worker thread.
+
+    Rotates bridge.log past MAX_LOG_BYTES (keeping bridge.log.1 to .KEPT_LOGS)
+    and collapses consecutive identical lines, such as a proxy outage logging
+    the same request failure every refresh, into one "repeated" note.
+    """
+
+    def __init__(self, path: Path, max_bytes: int = MAX_LOG_BYTES, kept: int = KEPT_LOGS) -> None:
+        super().__init__()
+        self.path = path
+        self.max_bytes = max_bytes
+        self.kept = kept
+        self._lock = threading.Lock()
+        self._partial = ""
+        self._last: str | None = None
+        self._repeats = 0
+        if path.exists() and path.stat().st_size >= max_bytes:
+            self._rotate_files()
+        self._stream = path.open("a", encoding="utf-8", buffering=1)
+
+    def _rotate_files(self) -> None:
+        for index in range(self.kept - 1, 0, -1):
+            older = self.path.with_name(f"{self.path.name}.{index}")
+            if older.exists():
+                older.replace(self.path.with_name(f"{self.path.name}.{index + 1}"))
+        self.path.replace(self.path.with_name(f"{self.path.name}.1"))
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        with self._lock:
+            self._partial += text
+            *lines, self._partial = self._partial.split("\n")
+            for line in lines:
+                self._emit(line)
+        return len(text)
+
+    def _emit(self, line: str) -> None:
+        if line.strip() and line == self._last:
+            self._repeats += 1
+            return
+        self._write_repeats()
+        self._stream.write(line + "\n")
+        self._last = line
+        if self._stream.tell() >= self.max_bytes:
+            self._stream.close()
+            self._rotate_files()
+            self._stream = self.path.open("a", encoding="utf-8", buffering=1)
+
+    def _write_repeats(self) -> None:
+        if self._repeats:
+            stamp = datetime.now().isoformat(timespec="seconds")
+            self._stream.write(f"    (previous line repeated {self._repeats} more times, last {stamp})\n")
+            self._repeats = 0
+
+    def flush(self) -> None:
+        with self._lock:
+            if not self._stream.closed:
+                self._stream.flush()
+
+    def close(self) -> None:
+        with self._lock:
+            if not self._stream.closed:
+                if self._partial:
+                    self._emit(self._partial)
+                    self._partial = ""
+                self._write_repeats()
+                self._stream.close()
+        super().close()
+
+
 def open_log() -> tuple[TextIO, Path]:
     directory = log_directory()
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "bridge.log"
-    return path.open("a", encoding="utf-8", buffering=1), path
+    return RotatingLog(path), path
 
 
 def acquire_single_instance_lock() -> tuple[IO[str], bool]:
